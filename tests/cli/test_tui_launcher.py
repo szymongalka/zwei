@@ -85,15 +85,19 @@ def test_default_tui_workspace_is_the_launch_directory(
     assert _initial_tui_workspace(str(override)) == override.resolve()
 
 
+@pytest.mark.parametrize("picker", [False, True])
 def test_launcher_passes_the_canonical_model_preset_to_the_tui(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    picker: bool,
 ) -> None:
     config = Config(
         channels={"websocket": {"tokenIssueSecret": "bootstrap-secret"}},
     )
     config.model_presets["Deep Research"] = ModelPresetConfig(model="openai/gpt-5.6")
     config.agents.defaults.model_preset = "Deep Research"
+    config.agents.defaults.workspace = str(tmp_path / "personal")
+    monkeypatch.setenv("ZWEI_TUI_SESSION_PICKER", "1" if picker else "0")
     captured: dict[str, str] = {}
     events: list[str] = []
     released: list[bool] = []
@@ -107,6 +111,7 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
     def ensure_gateway(*args: object, **kwargs: object) -> SimpleNamespace:
         assert events == ["spawned"]
         assert kwargs["wait_until_ready"] is False
+        assert kwargs["workspace_override"] is None
         return SimpleNamespace(
             base_url="http://127.0.0.1:8765",
             lease=FakeLease(),
@@ -138,7 +143,9 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
     assert result == 0
     assert captured["NANOBOT_TUI_MODEL"] == "openai/gpt-5.6"
     assert captured["NANOBOT_TUI_MODEL_PRESET"] == "Deep Research"
-    assert captured["NANOBOT_TUI_WORKSPACE"] == str(Path.cwd().resolve())
+    assert captured["NANOBOT_TUI_WORKSPACE"] == str(
+        config.workspace_path if picker else Path.cwd().resolve()
+    )
     assert captured["NANOBOT_TUI_BOOTSTRAP_URL"] == (
         "http://127.0.0.1:8765/webui/bootstrap"
     )

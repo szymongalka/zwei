@@ -6,7 +6,6 @@ import os
 import sys
 
 from nanobot.cli import entry
-from nanobot.config.loader import load_config
 
 _PICKER_ENV = "ZWEI_TUI_SESSION_PICKER"
 
@@ -17,9 +16,9 @@ def main() -> None:
     previous_picker = os.environ.pop(_PICKER_ENV, None)
     try:
         if len(original_argv) == 1:
-            # Personal sessions belong to the configured workspace, not whichever
-            # directory the shell happens to occupy when Zwei is opened.
-            sys.argv = [original_argv[0], "--workspace", str(load_config().workspace_path)]
+            # Select the shared local gateway without a workspace override:
+            # that override would address a separate gateway instance.
+            sys.argv = [original_argv[0], "agent"]
             os.environ[_PICKER_ENV] = "1"
         entry.main()
     finally:

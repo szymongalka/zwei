@@ -2579,9 +2579,7 @@ export class NanobotTui {
       this.sessionMenu.update(this.composer.plainText, limit)
       this.syncComposerPlaceholder()
       this.updateMeta()
-      this.status.content = this.startupPending
-        ? `Zwei · ${sessions.length} sesji · ↑/↓ wybór · Enter otwórz · Esc wyjdź`
-        : sessions.length ? `${sessions.length} sessions` : "No saved sessions"
+      this.status.content = this.sessionPickerStatus(sessions.length)
     } catch (error) {
       if (loadId !== this.sessionLoadId) return
       this.sessionLoading = false
@@ -2795,12 +2793,17 @@ export class NanobotTui {
         this.client.activeChatId,
         this.defaultModelPreset,
       )
-      this.status.content = sessions.length ? `${sessions.length} sessions` : "No saved sessions"
+      this.status.content = this.sessionPickerStatus(sessions.length)
     } catch {
       // Keep the existing picker usable during a transient refresh failure.
     } finally {
       this.sessionRefreshPending = false
     }
+  }
+
+  private sessionPickerStatus(count: number): string {
+    if (this.startupPending) return `Zwei · sesje: ${count} · Esc wyjdź`
+    return count ? `${count} sessions` : "No saved sessions"
   }
 
   private openUsage(): void {

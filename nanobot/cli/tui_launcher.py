@@ -85,7 +85,13 @@ def launch_tui(
 ) -> int:
     """Run the native TUI against the shared local gateway."""
     chat_id = _initial_tui_chat_id(session_id)
-    tui_workspace = _initial_tui_workspace(workspace_override)
+    # Zwei's personal chooser uses the configured workspace for new chats while
+    # retaining the existing gateway identity (workspace_override stays unset).
+    tui_workspace = (
+        config.workspace_path
+        if os.environ.get("ZWEI_TUI_SESSION_PICKER") == "1" and workspace_override is None
+        else _initial_tui_workspace(workspace_override)
+    )
     command = resolve_tui_command()
     base_url, bootstrap_secret = _tui_gateway_connection(config)
     gateway: _GatewayHandle | None = None

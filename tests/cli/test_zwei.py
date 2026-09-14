@@ -5,19 +5,15 @@ from pathlib import Path
 import pytest
 
 from nanobot.cli import zwei
-from nanobot.config.schema import Config
 
 
-def test_bare_zwei_uses_configured_workspace_and_restores_launch_state(monkeypatch, tmp_path):
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "personal")
-    monkeypatch.setattr(zwei, "load_config", lambda: config)
+def test_bare_zwei_uses_shared_local_gateway_and_restores_launch_state(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["zwei"])
     monkeypatch.delenv("ZWEI_TUI_SESSION_PICKER", raising=False)
     monkeypatch.chdir(tmp_path)
 
     def launch():
-        assert sys.argv == ["zwei", "--workspace", str(tmp_path / "personal")]
+        assert sys.argv == ["zwei", "agent"]
         assert os.environ["ZWEI_TUI_SESSION_PICKER"] == "1"
         raise SystemExit(0)
 

@@ -62,6 +62,7 @@ async function fixture(empty = false) {
     sessionMenu: SessionMenu; composer: TextareaRenderable; ready: boolean
     status: { plainText: string }; modelPreset: string
     runtimeControls: { workspaceScope: WorkspaceScopePayload }
+    refreshSessionMenu(): Promise<void>
   }
   app.accept({ event: "ready", chat_id: "", client_id: "fixture" })
   await waitUntil(() => ui.sessionMenu.visible)
@@ -74,6 +75,12 @@ test("startup chooser cancels without creating or resuming a conversation", asyn
   expect(setup!.captureCharFrame()).toContain("Nowa sesja")
   expect(setup!.captureCharFrame()).toContain("Saved work")
   expect(ui.sessionMenu.newChatSelected).toBe(true)
+  await ui.refreshSessionMenu()
+  expect(ui.sessionMenu.newChatSelected).toBe(true)
+  expect(ui.status.plainText).toBe("Zwei · sesje: 1 · Esc wyjdź")
+  setup!.resize(56, 18)
+  await setup!.renderOnce()
+  expect(setup!.captureCharFrame()).toContain("Nowa sesja")
   setup!.mockInput.pressEscape()
   await waitUntil(() => setup!.renderer.isDestroyed)
   expect(attached).toEqual([])
