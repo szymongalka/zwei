@@ -50,6 +50,54 @@ async function waitUntil(predicate: () => boolean, timeout = 1_000): Promise<voi
   if (!predicate()) throw new Error(`condition was not met within ${timeout}ms`)
 }
 
+describe("session selection before chat creation", () => {
+  for (const choice of ["cancel", "new", "existing"] as const) {
+    test(`waits through reconnect until the user chooses: ${choice}`, async () => {
+      const original = globalThis.WebSocket
+      const sockets: FakeSocket[] = []
+      Object.defineProperty(globalThis, "WebSocket", {
+        configurable: true,
+        value: class extends FakeSocket { constructor() { super(); sockets.push(this) } },
+      })
+      const client = new NanobotClient({
+        url: "ws://fixture.invalid", deferInitialChat: true, reconnectDelayMs: 1,
+        onEvent: () => {}, onStatus: () => {},
+      })
+      const ready = { data: JSON.stringify({ event: "ready", chat_id: "", client_id: "fixture" }) }
+      try {
+        client.connect()
+        await waitUntil(() => sockets.length === 1)
+        sockets[0]!.emit("open")
+        sockets[0]!.emit("message", ready)
+        expect(sockets[0]!.sent).toEqual([])
+        sockets[0]!.emit("close")
+        await waitUntil(() => sockets.length === 2)
+        const socket = sockets[1]!
+        socket.emit("open")
+        socket.emit("message", ready)
+        expect(socket.sent).toEqual([])
+        if (choice === "cancel") {
+          client.close()
+          expect(socket.sent).toEqual([])
+        } else {
+          const scope = { project_path: "/personal", access_mode: "restricted" as const }
+          if (choice === "new") client.newChat(scope)
+          else client.attach("chosen")
+          expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
+            choice === "new" ? { type: "new_chat", workspace_scope: scope } : { type: "attach", chat_id: "chosen" },
+          ])
+          socket.emit("message", { data: JSON.stringify({ event: "attached", chat_id: "chosen" }) })
+          socket.emit("message", ready)
+          expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: "attach", chat_id: "chosen" })
+        }
+      } finally {
+        client.close()
+        Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original })
+      }
+    })
+  }
+})
+
 describe("Desktop attach-only protocol", () => {
   const gatewayId = "4d7d6bea-6d4b-4da1-975f-3d835c986c50"
   async function fixture(run: (client: NanobotClient, socket: FakeSocket, statuses: ConnectionStatus[], attempts: () => number) => Promise<void>) {

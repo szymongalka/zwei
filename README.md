@@ -48,6 +48,11 @@ while keeping the original runtime and preserving a practical path for upstream 
   Optional features are disabled unless configured.
 - **Source development:** install this repository in editable mode using the source
   instructions below. Keep runtime workspace, credentials, and personal data outside the source tree.
+- **Terminal session chooser:** run `zwei` to search saved WebUI/terminal sessions,
+  resume one with its history, model and workspace, or select **Nowa sesja** to create
+  a conversation in the configured agent workspace. Use ↑/↓ and Enter; Esc exits
+  without creating a conversation. Explicit commands such as `zwei status`,
+  `zwei --session websocket:CHAT_ID` and `zwei -m "Hello"` retain the nanobot CLI behavior.
 
 The rest of this README documents the inherited nanobot runtime. PyPI packages,
 one-command installers, upstream badges, and upstream release links refer to

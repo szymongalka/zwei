@@ -113,6 +113,7 @@ dev = [
 
 [project.scripts]
 nanobot = "nanobot.cli.entry:main"
+zwei = "nanobot.cli.zwei:main"
 nanobot-desktop-tui = "nanobot.cli.desktop_tui:main"
 
 # Third-party tool plugins register here.  Built-in tools are discovered

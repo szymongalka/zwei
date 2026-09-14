@@ -13,7 +13,12 @@ The fork was renamed from `nanobot-plus` to **Zwei**. The canonical repository i
 `webui/src/lib/branding.ts` contains the small product-copy overlay. Original
 translation files remain available for upstream contributions.
 
-The Python package and CLI remain `nanobot-ai` / `nanobot`. Existing `.nanobot`
+The Python package and original CLI remain `nanobot-ai` / `nanobot`. The fork adds
+`zwei`: a bare invocation opens the native terminal's session chooser; explicit
+arguments continue through the shared nanobot CLI. The optional terminal startup
+mode defers chat creation until selection and uses the existing gateway session
+list, history and workspace metadata. It introduces no separate session store.
+Existing `.nanobot`
 data, browser storage keys, API routes, service names and configured source paths
 keep their meanings. Renaming a repository does not require moving a working
 editable installation. The About view credits the original nanobot project;
