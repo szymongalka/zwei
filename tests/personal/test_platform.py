@@ -303,7 +303,10 @@ def test_native_memory_is_augmented_and_keeps_earlier_versions(tmp_path):
 
 async def test_autonomous_development_uses_existing_agent_and_records_result(tmp_path):
     service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
-    agent = SimpleNamespace(workspace=tmp_path, process_direct=AsyncMock(return_value=SimpleNamespace(content="Verified one improvement")))
+    async def completed(*args, **kwargs):
+        await kwargs["hooks"][0].after_run(AgentRunHookContext([], stop_reason="completed"))
+        return SimpleNamespace(content="Verified one improvement")
+    agent = SimpleNamespace(workspace=tmp_path, process_direct=AsyncMock(side_effect=completed))
     await development_cycle(service, agent)
     assert agent.process_direct.call_args.kwargs["channel"] == "cli"
     assert "do not manufacture tasks" in agent.process_direct.call_args.args[0]
@@ -317,3 +320,14 @@ async def test_development_failure_is_recorded_without_secret_exception_text(tmp
     await development_cycle(service, agent)
     assert service.store.checkpoint("development_state") == "error:ValueError"
     assert "secret-provider-detail" not in json.dumps(service.store.status())
+
+
+async def test_nonempty_provider_error_is_not_a_successful_development_cycle(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    async def failed(*args, **kwargs):
+        await kwargs["hooks"][0].after_run(AgentRunHookContext([], stop_reason="error"))
+        return SimpleNamespace(content="Provider credentials require renewal")
+    agent = SimpleNamespace(workspace=tmp_path, process_direct=AsyncMock(side_effect=failed))
+    await development_cycle(service, agent)
+    assert service.store.checkpoint("development_state") == "error:RuntimeError"
+    assert service.store.status()["evolution"][0]["status"] == "development_failed"
