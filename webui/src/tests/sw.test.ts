@@ -359,7 +359,7 @@ describe("service worker", () => {
 
   it("keeps un-hashed brand assets on the network-first path", async () => {
     const sw = loadSw();
-    const iconUrl = `${ORIGIN}/brand/nanobot_icon_192.png`;
+    const iconUrl = `${ORIGIN}/brand/zwei-192.png`;
     const originalRequest = new Request(iconUrl);
     sw.fetchMock.mockResolvedValue(new Response("png bytes"));
 
@@ -376,7 +376,7 @@ describe("service worker", () => {
 
   it("clones network responses before yielding their body to the browser", async () => {
     const sw = loadSw();
-    const request = new Request(`${ORIGIN}/brand/nanobot_icon_192.png`);
+    const request = new Request(`${ORIGIN}/brand/zwei-192.png`);
     let browserOwnsBody = false;
     let clonedBeforeBrowser = false;
     const response = {

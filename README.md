@@ -1,7 +1,6 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./images/readme-cover-dark.svg">
-  <img alt="nanobot README cover" src="./images/readme-cover-light.svg">
-</picture>
+<p align="center">
+  <img alt="Zwei" src="./webui/public/brand/zwei.svg" width="160" height="160">
+</p>
 
 <div align="center">
   <p>
@@ -32,9 +31,9 @@
   </p>
 </div>
 
-# nanobot-plus
+# Zwei
 
-**nanobot-plus** is [Szymon Gałka's fork](https://github.com/szymongalka/nanobot-plus)
+**Zwei** is [Szymon Gałka's fork](https://github.com/szymongalka/zwei)
 of [HKUDS/nanobot](https://github.com/HKUDS/nanobot). The fork is intended for selected extensions
 while keeping the original runtime and preserving a practical path for upstream updates.
 
@@ -53,7 +52,7 @@ while keeping the original runtime and preserving a practical path for upstream 
 The rest of this README documents the inherited nanobot runtime. PyPI packages,
 one-command installers, upstream badges, and upstream release links refer to
 HKUDS/nanobot; they do not distribute this fork's custom source changes.
-Propose fork-specific changes through [this fork's pull requests](https://github.com/szymongalka/nanobot-plus/pulls)
+Propose fork-specific changes through [this fork's pull requests](https://github.com/szymongalka/zwei/pulls)
 and retain upstream attribution when contributing fixes back.
 
 🐈 **nanobot** is an ultra-lightweight, open-source, self-hosted personal AI agent framework written in Python. It runs in a WebUI, terminal, or chat apps and combines tools, long-term memory, MCP integrations, model routing, multi-agent delegation, scheduled automation, and an OpenAI-compatible API in a small, readable core.
@@ -156,8 +155,8 @@ Clone the repository and install it in editable mode. Bun is required because th
 checkout runs the matching TUI directly instead of downloading an older release binary.
 
 ```bash
-git clone https://github.com/szymongalka/nanobot-plus.git
-cd nanobot-plus
+git clone https://github.com/szymongalka/zwei.git
+cd zwei
 python -m venv .venv
 ```
 

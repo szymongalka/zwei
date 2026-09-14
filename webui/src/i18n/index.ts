@@ -17,6 +17,8 @@ import {
   type SupportedLocale,
 } from "./config";
 
+import { withProductBrand } from "@/lib/branding";
+
 type CommonMessages = typeof import("./locales/en/common.json");
 type CommonMessagesModule = { default: CommonMessages };
 type LocaleResource = { common: CommonMessages } & Record<string, unknown>;
@@ -57,7 +59,7 @@ async function loadLocaleResources(
 
   const pending = Promise.all([loader(), channelLocaleResources(locale)])
     .then(([common, channels]) => {
-      const resource: LocaleResource = { common: common.default, ...channels };
+      const resource: LocaleResource = { common: withProductBrand(common.default), ...channels };
       resources[locale] = resource;
       if (i18n.isInitialized) {
         for (const [namespace, messages] of Object.entries(resource)) {

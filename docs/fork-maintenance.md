@@ -1,16 +1,35 @@
-# Maintaining nanobot-plus
+# Maintaining Zwei
 
-nanobot-plus is the `szymongalka/nanobot-plus` fork of
+Zwei is the `szymongalka/zwei` fork of
 [`HKUDS/nanobot`](https://github.com/HKUDS/nanobot). Its purpose is to add selected capabilities
 while keeping the original runtime, interfaces, and release path maintainable.
 Compatibility is checked against a specific upstream revision; it is not a promise
 that future updates will never require conflict resolution.
 
+## Zwei identity and compatibility
+
+The fork was renamed from `nanobot-plus` to **Zwei**. The canonical repository is
+`szymongalka/zwei`. WebUI titles, sign-in, app metadata and icons use Zwei;
+`webui/src/lib/branding.ts` contains the small product-copy overlay. Original
+translation files remain available for upstream contributions.
+
+The Python package and CLI remain `nanobot-ai` / `nanobot`. Existing `.nanobot`
+data, browser storage keys, API routes, service names and configured source paths
+keep their meanings. Renaming a repository does not require moving a working
+editable installation. The About view credits the original nanobot project;
+its version check describes the inherited runtime, not a separate Zwei release.
+
+The editable icon source is `webui/public/brand/zwei.svg`, an original glass-style
+Z monogram. The adjacent 32, 180, 192 and 512 pixel PNG exports support favicon,
+Apple touch and web-app installation. Regenerate them from that SVG with a
+standards-compliant SVG renderer. The current exports use `@resvg/resvg-js`.
+The service worker retains its storage namespace and updates the public icon paths.
+
 ## Repository ownership
 
 | Remote | Repository | Purpose |
 |---|---|---|
-| `origin` | `szymongalka/nanobot-plus` | Fork branches, pull requests, and the fork's `main`. |
+| `origin` | `szymongalka/zwei` | Fork branches, pull requests, and the fork's `main`. |
 | `upstream` | `HKUDS/nanobot` | Original source and releases; fetch and compare before integration. |
 
 Verify these URLs in each checkout. If `upstream` is absent, add it with

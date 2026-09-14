@@ -1,6 +1,6 @@
 # WebUI add-ons
 
-This is the nanobot-plus placement and integration policy. The first implemented
+This is the Zwei placement and integration policy. The first implemented
 feature is [Personal add-ons](./personal-platform.md), with account, inbox, memory
 and development tabs. Examples below do not imply other features already exist.
 

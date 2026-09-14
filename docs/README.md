@@ -78,7 +78,7 @@ These pages explain implementation and extension points. You do not need them to
 
 | Goal | Read |
 |---|---|
-| Maintain the nanobot-plus fork and integrate upstream | [Fork maintenance](./fork-maintenance.md) |
+| Maintain the Zwei fork and integrate upstream | [Fork maintenance](./fork-maintenance.md) |
 | Choose tabs or panels for a WebUI add-on | [WebUI add-on policy](./webui-addons.md) |
 | Understand source ownership and runtime flow | [Architecture](./architecture.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |

@@ -1,6 +1,6 @@
 # Contributing to nanobot
 
-For work in **nanobot-plus**, follow [Fork maintenance](./docs/fork-maintenance.md)
+For work in **Zwei**, follow [Fork maintenance](./docs/fork-maintenance.md)
 alongside this upstream guide. Target the fork's `main` for fork changes; upstream
 synchronization uses an integration branch rather than resetting or replacing the fork.
 

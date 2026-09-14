@@ -2,7 +2,7 @@ This file provides guidance to AI coding agents working with this repository.
 
 ## Fork-specific work
 
-This checkout is `szymongalka/nanobot-plus`, based on `HKUDS/nanobot`.
+This checkout is `szymongalka/zwei`, based on `HKUDS/nanobot`.
 Read [`docs/fork-maintenance.md`](docs/fork-maintenance.md) before changing the fork
 or integrating upstream. For frontend additions, also read
 [`docs/webui-addons.md`](docs/webui-addons.md): independent tools belong in Add-ons

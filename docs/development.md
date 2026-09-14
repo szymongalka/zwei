@@ -2,7 +2,7 @@
 
 This page collects contributor-facing notes for extending nanobot. User-facing setup and runtime options live in [`configuration.md`](./configuration.md).
 
-## nanobot-plus extensions
+## Zwei extensions
 
 Read [Fork maintenance](./fork-maintenance.md) for source ownership, focused changes,
 and upstream integration. Read [WebUI add-ons](./webui-addons.md) before adding a

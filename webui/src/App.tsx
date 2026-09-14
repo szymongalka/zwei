@@ -1,3 +1,4 @@
+import { PRODUCT_ICON, PRODUCT_NAME } from "@/lib/branding";
 import {
   lazy,
   Suspense,
@@ -403,7 +404,7 @@ function AuthForm({
         >
           <div className="text-center">
             <img
-              src="/brand/nanobot_mark.svg"
+              src={PRODUCT_ICON}
               alt=""
               width={56}
               height={56}
@@ -2567,7 +2568,7 @@ function Shell({
 
   useEffect(() => {
     if (view === "addons") {
-      document.title = `${i18n.resolvedLanguage?.startsWith("pl") ? "Dodatki" : "Add-ons"} · nanobot`;
+      document.title = `${i18n.resolvedLanguage?.startsWith("pl") ? "Dodatki" : "Add-ons"} · ${PRODUCT_NAME}`;
       return;
     }
     if (view === "settings") {

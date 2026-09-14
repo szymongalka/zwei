@@ -1,3 +1,4 @@
+import { PRODUCT_ICON } from "@/lib/branding";
 import {
   type ReactNode,
   type RefObject,
@@ -182,7 +183,7 @@ export function Sidebar(props: SidebarProps) {
           )}
         >
           <img
-            src="/brand/nanobot_mark.svg"
+            src={PRODUCT_ICON}
             alt=""
             className="h-8 w-8 select-none object-contain"
             draggable={false}
