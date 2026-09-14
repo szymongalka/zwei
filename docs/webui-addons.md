@@ -1,8 +1,8 @@
 # WebUI add-ons
 
-This is the nanobot-plus design policy for future additions. It defines placement
-and integration rules; it does not claim an add-on host or any of the example
-features has already been implemented.
+This is the nanobot-plus placement and integration policy. The first implemented
+feature is [Personal add-ons](./personal-platform.md), with account, inbox, memory
+and development tabs. Examples below do not imply other features already exist.
 
 ## Decision: tabs for independent tools, panels for context
 
@@ -18,7 +18,7 @@ pane IDs, workbench layout, and session history keep their existing meaning.
 |---|---|---|
 | A task that works independently of the active conversation | Tab inside Add-ons | Notes library, calendar overview, finance dashboard. |
 | A small view of the item currently being discussed | Context panel beside the conversation | A selected note, event, document, or diff. |
-| Credentials, enable/disable, and preferences | Existing settings/Apps surface appropriate to the capability | Connection status and configuration. |
+| Credentials, enable/disable, and preferences | Existing settings/Apps surface or the owning account panel | Connection status and configuration. |
 | A short, one-off choice or confirmation | Existing dialog/popover components | Selecting an item or confirming an edit. |
 | A separately hosted application with its own lifecycle | Explicit link to that application | An external service that already owns its UI. |
 
@@ -102,4 +102,4 @@ For each implemented add-on, verify:
 
 Record the tested upstream revision and the few shell integration points in the
 PR. Use [fork maintenance](./fork-maintenance.md) to verify the same feature after
-an upstream update. This policy needs no empty directories or runtime changes now.
+an upstream update. Create only the directories required by a concrete implementation.

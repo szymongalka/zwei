@@ -44,7 +44,9 @@ while keeping the original runtime and preserving a practical path for upstream 
   and validate against a specific upstream revision. See [Fork maintenance](./docs/fork-maintenance.md).
 - **A consistent WebUI:** independent tools use tabs inside one Add-ons view;
   conversation-specific details use context panels. See [WebUI add-on policy](./docs/webui-addons.md).
-  This is the integration design; the Add-ons host and example features are not implemented yet.
+  [Personal add-ons](./docs/personal-platform.md) implement account panels, a unified inbox,
+  durable archival with pgvector retrieval, and bounded autonomous development.
+  Optional features are disabled unless configured.
 - **Source development:** install this repository in editable mode using the source
   instructions below. Keep runtime workspace, credentials, and personal data outside the source tree.
 

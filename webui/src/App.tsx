@@ -106,6 +106,7 @@ type BootState =
       modelName: string | null;
       ingressLimits: BootstrapResponse["limits"] | null;
       runtimeSurface: RuntimeSurface;
+      personalEnabled: boolean;
     };
 
 const SIDEBAR_STORAGE_KEY = "nanobot-webui.sidebar";
@@ -123,7 +124,7 @@ const TOKEN_REFRESH_MIN_DELAY_MS = 5_000;
 const PAIRING_POLL_INTERVAL_MS = 5_000;
 const PAIRING_IDLE_POLL_INTERVAL_MS = 15_000;
 const PAIRING_DISMISS_SNOOZE_MS = 30_000;
-type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "channels";
+type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "channels" | "addons";
 type ShellRoute = {
   view: ShellView;
   activeKey: string | null;
@@ -134,6 +135,7 @@ const ThreadShell = lazy(() => import("@/components/thread/ThreadShell").then(
   (module) => ({ default: module.ThreadShell }),
 ));
 const loadSettingsView = () => import("@/components/settings/SettingsView");
+const PersonalView = lazy(async () => ({ default: (await import("@/addons/personal/PersonalView")).PersonalView }));
 const SettingsView = lazy(async () => {
   const module = await loadSettingsView();
   return { default: module.SettingsView };
@@ -248,6 +250,10 @@ function readShellRoute(): ShellRoute {
     ? rawSettingsSection
     : "overview";
   const activeKey = params.get("chat")?.trim() || null;
+
+  if (path === "/addons" || path.startsWith("/addons/")) {
+    return { view: "addons", activeKey, settingsSection: "overview" };
+  }
 
   if (path === "/settings") {
     return {
@@ -899,6 +905,7 @@ export default function App() {
           ? {
               ...current,
               token: boot.api_token ?? "",
+              personalEnabled: boot.personal_enabled === true,
               tokenExpiresAt,
               modelName: boot.model_name ?? current.modelName,
               ingressLimits: boot.limits ?? current.ingressLimits,
@@ -941,6 +948,7 @@ export default function App() {
           setState({
             status: "ready",
             client,
+            personalEnabled: boot.personal_enabled === true,
             token: boot.api_token ?? "",
             tokenExpiresAt: boot.expires_in
               ? bootstrapTokenExpiresAt(boot.expires_in)
@@ -1072,6 +1080,7 @@ export default function App() {
       ingressLimits={state.ingressLimits}
     >
       <Shell
+        personalEnabled={state.personalEnabled}
         runtimeSurface={state.runtimeSurface}
         onModelNameChange={handleModelNameChange}
         onLogout={handleLogout}
@@ -1082,11 +1091,13 @@ export default function App() {
 }
 
 function Shell({
+  personalEnabled,
   runtimeSurface,
   onModelNameChange,
   onLogout,
   onNativeEngineRestart,
 }: {
+  personalEnabled: boolean;
   runtimeSurface: RuntimeSurface;
   onModelNameChange: (modelName: string | null) => void;
   onLogout: () => void;
@@ -1115,7 +1126,7 @@ function Shell({
   const [activeKey, setActiveKey] = useState<string | null>(
     initialRouteRef.current.activeKey,
   );
-  const [view, setView] = useState<ShellView>(initialRouteRef.current.view);
+  const [view, setView] = useState<ShellView>(initialRouteRef.current.view === "addons" && !personalEnabled ? "chat" : initialRouteRef.current.view);
   const [temporarySessions, setTemporarySessions] = useState<Record<string, ChatSummary>>({});
   const [temporaryChatEnabled, setTemporaryChatEnabled] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
@@ -1214,6 +1225,7 @@ function Shell({
 
   const navigate = useCallback(
     (route: ShellRoute, options?: { replace?: boolean }) => {
+      if (route.view === "addons" && !personalEnabled) route = { ...route, view: "chat" };
       const leave = () => {
         setActiveKey(route.activeKey);
         setView(route.view);
@@ -1224,12 +1236,16 @@ function Shell({
         settingsExitGuardRef.current(leave);
       } else leave();
     },
-    [],
+    [personalEnabled],
   );
 
   useEffect(() => {
     const applyRoute = () => {
-      const route = readShellRoute();
+      let route = readShellRoute();
+      if (route.view === "addons" && !personalEnabled) {
+        route = { ...route, view: "chat" };
+        writeShellRoute(route, true);
+      }
       if (currentShellRouteRef.current.view === "settings" && route.view !== "settings" && settingsExitGuardRef.current) {
         writeShellRoute(currentShellRouteRef.current, true);
         settingsExitGuardRef.current(() => {
@@ -1256,7 +1272,7 @@ function Shell({
       window.removeEventListener("hashchange", applyRoute);
       window.removeEventListener("popstate", applyRoute);
     };
-  }, []);
+  }, [personalEnabled]);
 
   useEffect(() => {
     temporarySessionsRef.current = temporarySessions;
@@ -2051,6 +2067,12 @@ function Shell({
     setMobileSidebarOpen(false);
   }, [activeKey, navigate]);
 
+  const onOpenAddons = useCallback(() => {
+    setSessionSearchOpen(false);
+    navigate({ view: "addons", activeKey, settingsSection: "overview" });
+    setMobileSidebarOpen(false);
+  }, [activeKey, navigate]);
+
   const onOpenAutomations = useCallback(() => {
     setSessionSearchOpen(false);
     navigate({ view: "automations", activeKey, settingsSection: "automations" });
@@ -2544,6 +2566,10 @@ function Shell({
   }, [updateWorkbenchState]);
 
   useEffect(() => {
+    if (view === "addons") {
+      document.title = `${i18n.resolvedLanguage?.startsWith("pl") ? "Dodatki" : "Add-ons"} · nanobot`;
+      return;
+    }
     if (view === "settings") {
       document.title = t("app.documentTitle.chat", {
         title: t("settings.sidebar.title"),
@@ -2625,12 +2651,13 @@ function Shell({
     onNewChatInProject,
     onOpenSettings,
     onOpenApps,
+    onOpenAddons: personalEnabled ? onOpenAddons : undefined,
     onOpenAutomations,
     onOpenChannels,
     onOpenSkills,
     onSettingsIntent,
     onOpenSearch: onOpenSessionSearch,
-    activeUtility: view === "apps" || view === "automations" || view === "skills" || view === "channels" ? view : null,
+    activeUtility: view === "apps" || view === "automations" || view === "skills" || view === "channels" || view === "addons" ? view : null,
     onToggleArchived,
     pinnedKeys: sidebarPinnedTabKeys,
     archivedKeys: sidebarArchivedTabKeys,
@@ -2915,7 +2942,8 @@ function Shell({
                 </Suspense>
               </ThreadVisibilityContext.Provider>
             </div>
-            {view !== "chat" && (
+            {view === "addons" && personalEnabled && <div className="absolute inset-0 flex flex-col"><Suspense fallback={<SurfaceLoadingFallback />}><PersonalView onBack={onBackToChat} /></Suspense></div>}
+            {view !== "chat" && view !== "addons" && (
               <div className="absolute inset-0 flex flex-col">
                 <Suspense fallback={<SurfaceLoadingFallback />}>
                   <SettingsView

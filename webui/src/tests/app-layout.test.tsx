@@ -289,6 +289,29 @@ import {
 import App from "@/App";
 
 describe("App layout", () => {
+  it("keeps disabled add-on routes in chat on initial load and browser navigation", async () => {
+    window.history.replaceState(null, "", "/#/addons/apple");
+    render(<App />);
+    expect(await screen.findByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add-ons", exact: true })).not.toBeInTheDocument();
+    await act(async () => {
+      window.location.hash = "#/addons/memory";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(screen.getByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
+    expect(window.location.hash).not.toContain("addons");
+  });
+
+  it("opens the enabled personal view without creating a conversation", async () => {
+    vi.mocked(fetchBootstrap).mockResolvedValue({ token: "tok", api_token: "api-tok", ws_path: "/", expires_in: 300, personal_enabled: true });
+    mockFetchRoutes({ "/api/personal/status": { enabled: false } });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add-ons", exact: true }));
+    expect(await screen.findByText("Personal add-ons are disabled.")).toBeInTheDocument();
+    expect(createChatSpy).not.toHaveBeenCalled();
+    expect(window.location.hash).toContain("addons");
+  });
+
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     mockSessions = [];

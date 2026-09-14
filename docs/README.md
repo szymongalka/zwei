@@ -27,6 +27,7 @@ Pick the row that matches what you want to accomplish next:
 
 | Goal | Guide |
 |---|---|
+| Connect personal accounts, combine inboxes and extend memory (this fork) | [Personal add-ons](./personal-platform.md) |
 | Learn the browser workbench | [WebUI](./webui.md) |
 | Connect Telegram, Discord, Slack, Feishu, WeChat, Email, or another chat app | [Chat Apps](./chat-apps.md) |
 | Choose a hosted, OAuth, company, or local model | [Provider Cookbook](./provider-cookbook.md) |

@@ -479,6 +479,11 @@ def _run_gateway(
     )
 
     # Create agent with cron service
+    personal = None
+    if config.personal.enabled:
+        from nanobot.personal.service import PersonalService
+
+        personal = PersonalService(config.personal, config.workspace_path, session_manager)
     agent = AgentLoop.from_config(
         config, bus,
         provider=provider_snapshot.provider,
@@ -493,10 +498,16 @@ def _run_gateway(
         provider_signature=provider_snapshot.signature,
         local_trigger_store=trigger_store,
         hooks=[_MCPReadinessHook(mcp_provider)],
-        hook_factories=[create_file_edit_activity_hook],
+        hook_factories=[create_file_edit_activity_hook, *([personal.hook] if personal else [])],
         tool_registry=tools,
         recovery_admission=recovery,
     )
+    if personal is not None:
+        from nanobot.personal.tools import PersonalArchiveTool
+
+        agent.tools.register(PersonalArchiveTool(personal))
+        agent.register_runtime_context_provider(personal.runtime_context)
+        agent.context.memory.archive_sink = personal.archive
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 
@@ -952,6 +963,12 @@ def _run_gateway(
                     name="nanobot-gateway-client-monitor",
                 ),
             ]
+            if personal is not None:
+                tasks.append(asyncio.create_task(personal.run(), name="nanobot-personal"))
+                if config.personal.development_enabled:
+                    from nanobot.personal.maintenance import run_development
+
+                    tasks.append(asyncio.create_task(run_development(personal, agent), name="nanobot-personal-development"))
             if health_server_enabled:
                 tasks.append(asyncio.create_task(
                     _health_server(config.gateway.host, port),

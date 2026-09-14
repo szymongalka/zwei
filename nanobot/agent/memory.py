@@ -69,6 +69,7 @@ class MemoryStore:
 
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
         self.workspace = workspace
+        self.archive_sink: Callable[[str, list[dict[str, Any]], str], str | None] | None = None
         self.max_history_entries = max_history_entries
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -834,6 +835,9 @@ class MemoryArchiver:
         if not source_messages:
             return None
 
+        if self.store.archive_sink is not None:
+            await asyncio.to_thread(self.store.archive_sink, session_key, source_messages, "pre-compaction")
+
         def raw_fallback() -> str:
             return self._raw_checkpoint(
                 source_messages,
@@ -941,6 +945,9 @@ class MemoryArchiver:
         input_token_budget: int,
     ) -> str | None:
         """Archive a captured session prefix without mutating the session."""
+        if self.store.archive_sink is not None and session.policy.persist and session.policy.log_content:
+            await asyncio.to_thread(self.store.archive_sink, session.key,
+                                    session.messages[:archive_end], "pre-session-compaction")
         messages = [
             message for message in session.messages[session.last_archived:archive_end]
             if not message.get("_command") and not is_summary_checkpoint(message)
