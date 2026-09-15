@@ -99,6 +99,35 @@ Authorization to work on a repository is supplied by its owner in the active tas
 this guide does not grant access to other repositories, account administration,
 releases, or deployments.
 
+## Deploy a checked change
+
+When a deployment task updates the running editable checkout, walk this checklist
+in order. It exists because a 2026-09-15 restart moved the gateway onto a `main`
+that lacked a merged feature required by the live configuration; the rejected
+config caused a crash-loop outage. Each step corresponds to one of its recorded
+lessons.
+
+1. Record the running revision, then back up the live configuration and built
+   frontend assets before switching. Note how each copy is restored.
+2. Confirm the working checkout is clean, then switch it to the reviewed commit
+   without discarding anyone's uncommitted work. The editable installation stays
+   on its existing path.
+3. Verify the target revision contains every fork feature the live configuration
+   depends on (for example, a `personal` config section requires the personal
+   platform in that revision), and that the local checkout and `origin/main` point
+   at the same revision. Divergence between them waits for its own failure.
+4. Validate the live configuration with the **new** code before any restart —
+   including a delayed or scheduled one: run
+   `nanobot status --config <path-to-config>` with the updated checkout's
+   interpreter and require a clean exit. A positive validation is the release
+   gate; a systemd failure after restart is not validation, it is the outage.
+5. Restart the service, then check the health endpoint and one authenticated
+   operation of each affected add-on. On regression, restore the recorded
+   revision, its matching build and the backed-up configuration, then re-check.
+   Never roll archive data back to undo a code change.
+6. Publish any local merge to the fork's `main` to `origin` immediately after
+   merging, so local and remote `main` cannot drift apart between operations.
+
 ## Integrate an upstream update
 
 1. Fetch `origin` and `upstream`, verify their default branches, and record the
