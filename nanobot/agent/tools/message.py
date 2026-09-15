@@ -14,7 +14,7 @@ from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext, current_request_context
 from nanobot.agent.tools.path_utils import resolve_workspace_path
 from nanobot.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import INTERMEDIATE_SEND_FLAG, OutboundMessage
 from nanobot.config.paths import get_workspace_path
 from nanobot.security.workspace_access import current_tool_workspace
 
@@ -233,6 +233,9 @@ class MessageTool(Tool):
             metadata["message_id"] = message_id
         if media:
             metadata["_record_channel_delivery"] = True
+        # Activity indicators in channels (e.g. Telegram typing) must keep
+        # running: this delivery is part of the ongoing turn, not its end.
+        metadata[INTERMEDIATE_SEND_FLAG] = True
 
         msg = OutboundMessage(
             channel=channel,

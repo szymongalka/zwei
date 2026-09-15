@@ -77,7 +77,10 @@ async def test_message_tool_records_media_deliveries() -> None:
         media=["/tmp/generated.png"],
     )
 
-    assert sent[0].metadata == {"_record_channel_delivery": True}
+    assert sent[0].metadata == {
+        "_record_channel_delivery": True,
+        "_intermediate_send": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -93,7 +96,7 @@ async def test_message_tool_inherits_metadata_for_same_target() -> None:
     with request_context(RequestContext(channel="slack", chat_id="C123", metadata=slack_meta)):
         await tool.execute(content="thread reply")
 
-    assert sent[0].metadata == slack_meta
+    assert sent[0].metadata == {**slack_meta, "_intermediate_send": True}
 
 
 @pytest.mark.asyncio
@@ -122,7 +125,7 @@ async def test_message_tool_clears_metadata_when_context_has_none() -> None:
     ):
         await tool.execute(content="plain reply")
 
-    assert sent[0].metadata == {}
+    assert sent[0].metadata == {"_intermediate_send": True}
 
 
 @pytest.mark.asyncio
@@ -142,7 +145,7 @@ async def test_message_tool_does_not_inherit_metadata_for_cross_target() -> None
     ):
         await tool.execute(content="channel reply", channel="slack", chat_id="C999")
 
-    assert sent[0].metadata == {}
+    assert sent[0].metadata == {"_intermediate_send": True}
 
 
 @pytest.mark.asyncio
