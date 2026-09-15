@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ try:
 except ImportError:
     pytest.skip("Telegram dependencies not installed (python-telegram-bot)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import INTERMEDIATE_SEND_FLAG, OutboundMessage
 from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.telegram.runtime import (
@@ -3357,3 +3358,84 @@ async def test_compaction_notices_are_tracked_per_compaction_id() -> None:
         chat_id=999, message_id=101, text="Context compacted.",
     )
     assert channel._compaction_notices == {("999", "c2"): 202}
+    channel._app.bot.edit_message_text.assert_awaited_once_with(
+        chat_id=999, message_id=101, text="Context compacted.",
+    )
+    assert channel._compaction_notices == {("999", "c2"): 202}
+
+
+@pytest.mark.asyncio
+async def test_send_intermediate_flag_keeps_typing_running() -> None:
+    """In-turn sends (message tool) must not stop the typing indicator."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+    _install_ready_app(channel)
+    stopped: list[str] = []
+    channel._stop_typing = lambda chat_id: stopped.append(chat_id)
+    channel._remove_reaction = AsyncMock(return_value=None)
+    active_loop = asyncio.create_task(asyncio.sleep(3600))
+    channel._typing_tasks["100"] = active_loop
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="100",
+            content="progress ping",
+            metadata={INTERMEDIATE_SEND_FLAG: True},
+        )
+    )
+
+    assert stopped == []
+    channel._remove_reaction.assert_not_awaited()
+    assert len(channel._app.bot.sent_messages) == 1
+    active_loop.cancel()
+
+
+@pytest.mark.asyncio
+async def test_send_final_response_stops_typing() -> None:
+    """A plain send without the intermediate flag stops the indicator."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+    _install_ready_app(channel)
+    stopped: list[str] = []
+    channel._stop_typing = lambda chat_id: stopped.append(chat_id)
+    channel._remove_reaction = AsyncMock(return_value=None)
+    active_loop = asyncio.create_task(asyncio.sleep(3600))
+    channel._typing_tasks["100"] = active_loop
+
+    await channel.send(OutboundMessage(channel="telegram", chat_id="100", content="final answer"))
+
+    assert stopped == ["100"]
+    assert len(channel._app.bot.sent_messages) == 1
+    active_loop.cancel()
+
+
+@pytest.mark.asyncio
+async def test_typing_loop_survives_failed_action() -> None:
+    """One failed send_chat_action must not silence the indicator for the turn."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+    _install_ready_app(channel)
+    attempts = {"count": 0}
+
+    async def flaky_action(**_kwargs) -> None:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("transient telegram error")
+
+    channel._app.bot.send_chat_action = flaky_action
+    channel._typing_interval = 0.01
+
+    task = asyncio.create_task(channel._typing_loop("100"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert attempts["count"] >= 2

@@ -29,7 +29,7 @@ from telegram.error import BadRequest, InvalidToken, NetworkError, RetryAfter, T
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from telegram.request import BaseRequest, HTTPXRequest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import INTERMEDIATE_SEND_FLAG, OutboundMessage
 from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
@@ -552,6 +552,7 @@ class TelegramChannel(BaseChannel):
         self.config: TelegramConfig = config
         self._app: TelegramApplication | None = None
         self._typing_tasks: dict[str, asyncio.Task[None]] = {}  # chat_id -> typing loop task
+        self._typing_interval: float = 4.0  # seconds between typing actions
         self._media_group_buffers: dict[str, dict[str, Any]] = {}
         self._media_group_tasks: dict[str, asyncio.Task[None]] = {}
         self._message_threads: dict[tuple[str, int], int] = {}
@@ -1065,8 +1066,10 @@ class TelegramChannel(BaseChannel):
 
         progress_event = msg.event if isinstance(msg.event, ProgressEvent) else None
 
-        # Only stop typing indicator and remove reaction for final responses
-        if progress_event is None:
+        # Only stop typing indicator and remove reaction for final responses.
+        # Intermediate in-turn sends (message tool, media delivery) keep the
+        # indicator running so continued work stays visible to the user.
+        if progress_event is None and not msg.metadata.get(INTERMEDIATE_SEND_FLAG):
             self._stop_typing(msg.chat_id)
             if reply_to_message_id := msg.metadata.get("message_id"):
                 with suppress(ValueError):
@@ -2103,14 +2106,18 @@ class TelegramChannel(BaseChannel):
             self.logger.debug("reaction removal failed: {}", e)
 
     async def _typing_loop(self, chat_id: str) -> None:
-        """Repeatedly send 'typing' action until cancelled."""
+        """Repeatedly send 'typing' action until cancelled; best-effort per tick."""
         try:
-            with suppress(asyncio.CancelledError):
-                while self._app:
+            while self._app:
+                try:
                     await self._app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
-                    await asyncio.sleep(4)
-        except Exception as e:
-            self.logger.debug("Typing indicator stopped for {}: {}", chat_id, e)
+                except Exception as e:
+                    # One failed action (network hiccup, flood control) must not
+                    # silence the indicator for the rest of the turn.
+                    self.logger.debug("Typing action failed for {}: {}", chat_id, e)
+                await asyncio.sleep(self._typing_interval)
+        except asyncio.CancelledError:
+            self.logger.debug("Typing indicator stopped for {}", chat_id)
 
     @staticmethod
     def _format_telegram_error(exc: Exception | None) -> str:

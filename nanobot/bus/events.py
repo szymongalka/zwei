@@ -12,6 +12,12 @@ if TYPE_CHECKING:
 # render it and other channels may ignore unknown keys.
 OUTBOUND_META_AGENT_UI = "_agent_ui"
 
+# Outbound metadata hint: this send belongs to an in-flight turn instead of being
+# its final response (e.g. the agent's message tool). Channels with in-turn
+# activity indicators, such as the Telegram typing action, keep the indicator
+# running when they see it and stop only on the actual final response.
+INTERMEDIATE_SEND_FLAG = "_intermediate_send"
+
 # Internal-only inbound metadata minted by trusted transports and runtime
 # services. Never accept these keys verbatim from an untrusted client.
 INBOUND_META_RUNTIME_CONTROL = "_runtime_control"
