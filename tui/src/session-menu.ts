@@ -4,6 +4,8 @@ import { PickerMenu, type PickerMenuTheme } from "./picker-menu"
 import type { SessionSummary } from "./protocol"
 
 type SessionMenuRow = SessionSummary & { active: boolean; unread: boolean }
+const NEW_CHAT = Symbol("new-chat")
+type SessionMenuItem = SessionMenuRow | typeof NEW_CHAT
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -26,7 +28,8 @@ function updatedLabel(value: string | null): string {
 /** Searchable session navigation over the gateway-owned session list. */
 export class SessionMenu {
   readonly root: BoxRenderable
-  private readonly picker: PickerMenu<SessionMenuRow>
+  private readonly picker: PickerMenu<SessionMenuItem>
+  private includeNewChat = false
   private readonly workspaceLabels = new Map<string, string>()
   private showWorkspaces = false
   private spinnerFrame = 0
@@ -43,11 +46,12 @@ export class SessionMenu {
     renderer: CliRenderer,
     private theme: PickerMenuTheme,
     onSelect?: (session: SessionSummary) => void,
+    onNewChat?: () => void,
   ) {
-    this.picker = new PickerMenu<SessionMenuRow>(renderer, theme, {
+    this.picker = new PickerMenu<SessionMenuItem>(renderer, theme, {
       id: "nanobot-tui-session-menu",
-      key: (session) => session.chatId,
-      searchText: (session) => [
+      key: (session) => session === NEW_CHAT ? "new" : `session:${session.chatId}`,
+      searchText: (session) => session === NEW_CHAT ? "Nowa sesja New session" : [
         sessionLabel(session),
         session.modelPreset || "",
         session.preview,
@@ -58,6 +62,7 @@ export class SessionMenu {
         session.recoveryState?.reason || "",
       ].join(" "),
       render: (session, selected) => {
+        if (session === NEW_CHAT) return [chunk("＋ Nowa sesja", selected ? this.theme.text : this.theme.muted)]
         const age = updatedLabel(session.updatedAt)
         const detail = [
           this.showWorkspaces ? this.workspaceLabel(session) : "",
@@ -77,7 +82,7 @@ export class SessionMenu {
         ]
       },
       emptyText: "No matching sessions",
-      onSelect,
+      onSelect: (session) => session === NEW_CHAT ? onNewChat?.() : onSelect?.(session),
     })
     this.root = this.picker.root
   }
@@ -91,11 +96,13 @@ export class SessionMenu {
     currentChatId: string,
     limit: number,
     defaultModelPreset = "",
+    includeNewChat = false,
   ): void {
+    this.includeNewChat = includeNewChat
     this.defaultModelPreset = defaultModelPreset
     this.observe(sessions, currentChatId)
     this.rows = this.prepareRows(sessions, currentChatId)
-    this.picker.show(this.rows, "", limit)
+    this.picker.show(this.items(), "", limit)
     this.syncSpinner()
   }
 
@@ -107,7 +114,7 @@ export class SessionMenu {
     this.defaultModelPreset = defaultModelPreset
     this.observe(sessions, currentChatId)
     this.rows = this.prepareRows(sessions, currentChatId)
-    this.picker.replace(this.rows)
+    this.picker.replace(this.items())
     this.syncSpinner()
   }
 
@@ -142,7 +149,16 @@ export class SessionMenu {
   }
 
   choose(): SessionSummary | null {
-    return this.picker.current()
+    const item = this.picker.current()
+    return item === NEW_CHAT ? null : item
+  }
+
+  get newChatSelected(): boolean {
+    return this.picker.current() === NEW_CHAT
+  }
+
+  private items(): SessionMenuItem[] {
+    return this.includeNewChat ? [NEW_CHAT, ...this.rows] : this.rows
   }
 
   hide(): void {

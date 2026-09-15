@@ -98,6 +98,7 @@ from nanobot.webui.native_folder_picker import (
     native_folder_picker_available,
     pick_native_folder,
 )
+from nanobot.webui.personal_routes import PersonalRoutes
 from nanobot.webui.session_automations import (
     all_automations_payload,
     serialize_automation_jobs,
@@ -165,6 +166,7 @@ class _WebUIThreadDiagnostics:
     event_loop_lag_ms: float = 0.0
 
 _WEBUI_MUTATION_PATHS = {
+    "personal.action": "/api/personal/action",
     "automation.enable": "/api/webui/automations/enable",
     "automation.disable": "/api/webui/automations/disable",
     "automation.delete": "/api/webui/automations/delete",
@@ -371,6 +373,7 @@ class GatewayHTTPHandler:
         self.ingress = ingress
         self.workspaces = workspaces
         self.settings = settings
+        self.personal_routes = PersonalRoutes(settings)
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
@@ -513,6 +516,8 @@ class GatewayHTTPHandler:
         return _http_error(404, "WebUI mutation action not found")
 
     def _is_webui_mutation_path(self, path: str) -> bool:
+        if path == "/api/personal/action":
+            return True
         if self.settings_routes.is_mutation_path(path):
             return True
         if re.match(r"^/api/sessions/[^/]+/delete$", path):
@@ -570,6 +575,11 @@ class GatewayHTTPHandler:
             return self._handle_bootstrap(connection, request)
         if got == "/webui/terminal":
             return self._handle_bootstrap(connection, request, terminal_probe=True)
+
+        if got in {"/api/personal/status", "/api/personal/action"}:
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            return await self.personal_routes.dispatch(got, _mutation_payload(request))
 
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(connection, request, got)
@@ -685,7 +695,7 @@ class GatewayHTTPHandler:
             return _http_json_response(terminal, extra_headers=_NO_STORE_HEADERS)
 
         if is_proxy_authenticated:
-            payload = {
+            payload: dict[str, Any] = {
                 "ws_path": _normalize_config_path(self.config.path),
                 "ws_url": self._bootstrap_ws_url(request),
                 "limits": self.ingress.bootstrap_limits(
@@ -698,6 +708,8 @@ class GatewayHTTPHandler:
                 "runtime_surface": self._runtime_surface,
                 "runtime_capabilities": self._capabilities,
             }
+            if self.personal_routes.enabled():
+                payload["personal_enabled"] = True
             return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
         api_token_allowed = bool(secret) or is_local_browser
@@ -735,6 +747,8 @@ class GatewayHTTPHandler:
         }
         if api_token is not None:
             payload["api_token"] = api_token
+        if self.personal_routes.enabled():
+            payload["personal_enabled"] = True
         return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
     def _bootstrap_ws_url(self, request: Any) -> str:

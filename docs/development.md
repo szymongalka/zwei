@@ -2,6 +2,14 @@
 
 This page collects contributor-facing notes for extending nanobot. User-facing setup and runtime options live in [`configuration.md`](./configuration.md).
 
+## Zwei extensions
+
+Read [Fork maintenance](./fork-maintenance.md) for source ownership, focused changes,
+and upstream integration. Read [WebUI add-ons](./webui-addons.md) before adding a
+frontend capability: use an Add-ons tab for an independent tool and a context
+panel for conversation-specific details. Implement only the structures needed by
+the first real feature; the policy itself does not add a generic plugin host.
+
 ## Adding an LLM Provider
 
 nanobot uses the provider registry in `nanobot/providers/registry.py` as the source of truth for LLM provider metadata. Most OpenAI-compatible providers need only two changes.

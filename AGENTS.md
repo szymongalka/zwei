@@ -1,5 +1,16 @@
 This file provides guidance to AI coding agents working with this repository.
 
+## Fork-specific work
+
+This checkout is `szymongalka/zwei`, based on `HKUDS/nanobot`.
+Read [`docs/fork-maintenance.md`](docs/fork-maintenance.md) before changing the fork
+or integrating upstream. For frontend additions, also read
+[`docs/webui-addons.md`](docs/webui-addons.md): independent tools belong in Add-ons
+tabs; conversation context belongs in panels. These are design rules, not an
+already implemented generic plugin API. Keep every file in its owning location
+and create directories only with real content. Task authorization comes from the
+user, not this document.
+
 ## Project Overview
 
 nanobot is a lightweight, open-source AI agent framework written in Python with a React/TypeScript WebUI. It centers around a small agent loop that receives messages from chat channels, invokes an LLM provider, executes tools, and manages session memory.

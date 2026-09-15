@@ -202,6 +202,7 @@ export interface ClientOptions {
   startupFailureDelayMs?: number
   startupRetryMaxDelayMs?: number
   chatId?: string
+  deferInitialChat?: boolean
   initialWorkspaceScope?: WorkspaceScopePayload
   reconnectDelayMs?: number
   onEvent: (event: InboundEvent) => void
@@ -1139,6 +1140,7 @@ export function sanitizeConnectionFailure(error: unknown): string {
 }
 
 export class NanobotClient {
+  private awaitingInitialSelection: boolean
   private identityVerified = false
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private socket: WebSocket | null = null
@@ -1163,6 +1165,7 @@ export class NanobotClient {
   }>()
 
   constructor(private readonly options: ClientOptions) {
+    this.awaitingInitialSelection = Boolean(options.deferInitialChat && !options.chatId)
     this.endpoint = options.targetEndpoint || connectionEndpoint(options.url)
   }
 
@@ -1307,11 +1310,13 @@ export class NanobotClient {
     if (!chatId) throw new Error("chat id is required")
     this.workspaceScope = undefined
     this.write({ type: "attach", chat_id: chatId })
+    this.awaitingInitialSelection = false
   }
 
   newChat(scope?: WorkspaceScopePayload): void {
     this.workspaceScope = scope
     this.write({ type: "new_chat", ...(scope ? { workspace_scope: scope } : {}) })
+    this.awaitingInitialSelection = false
   }
 
   forkChat(sourceChatId: string, beforeUserIndex: number, title?: string): void {
@@ -1436,7 +1441,7 @@ export class NanobotClient {
       if (requestedChatId) {
         this.chatId = requestedChatId
         this.write({ type: "attach", chat_id: this.chatId })
-      } else {
+      } else if (!this.awaitingInitialSelection) {
         this.newChat(this.options.initialWorkspaceScope)
       }
     } else if (event.event === "attached") {

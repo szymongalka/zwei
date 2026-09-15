@@ -36,6 +36,7 @@ const options: AppOptions = {
   apiUrl: process.env.NANOBOT_TUI_API_URL?.trim() || "",
   apiToken: process.env.NANOBOT_TUI_API_TOKEN?.trim() || "",
   chatId: process.env.NANOBOT_TUI_CHAT_ID?.trim() || undefined,
+  startWithSessions: process.env.ZWEI_TUI_SESSION_PICKER === "1",
   model: process.env.NANOBOT_TUI_MODEL?.trim() || "unknown model",
   modelPreset: process.env.NANOBOT_TUI_MODEL_PRESET?.trim() || "default",
   workspace,

@@ -110,6 +110,7 @@ interface AppOptions {
   apiUrl: string
   apiToken: string
   chatId?: string
+  startWithSessions?: boolean
   model: string
   modelPreset: string
   workspace: string
@@ -482,6 +483,7 @@ async function copyWithSystemClipboard(text: string): Promise<void> {
 }
 
 export class NanobotTui {
+  private startupPending: boolean
   private readonly renderer: CliRenderer
   private readonly transcript: Transcript
   private readonly commandMenu: CommandMenu
@@ -586,6 +588,7 @@ export class NanobotTui {
     clipboardImageReader: ClipboardImageReader = createClipboardImageReader(),
   ) {
     this.renderer = renderer
+    this.startupPending = Boolean(options.startWithSessions && !options.chatId)
     this.clipboardImageReader = clipboardImageReader
     this.defaultModelName = options.model
     this.defaultModelPreset = options.modelPreset
@@ -613,6 +616,7 @@ export class NanobotTui {
       renderer,
       commandMenuTheme(this.palette),
       (session) => this.switchSession(session),
+      () => this.startNewChat(),
     )
     this.mentionMenu = new MentionMenu(renderer, commandMenuTheme(this.palette))
     this.skillMenu = new SkillMenu(renderer, commandMenuTheme(this.palette))
@@ -661,6 +665,7 @@ export class NanobotTui {
           }
         : { url: options.wsUrl }),
       chatId: options.chatId,
+      deferInitialChat: this.startupPending,
       initialWorkspaceScope: options.desktopGatewayId ? undefined : {
         project_path: options.workspace,
         access_mode: options.access.toLocaleLowerCase().includes("full") ? "full" : "restricted",
@@ -694,7 +699,7 @@ export class NanobotTui {
         // outside their trigger or body dismisses them; hide() restores the
         // composer focus through the shared visibility callback.
         this.dismissRuntimeControls()
-        if (this.sessionLoading || this.sessionMenu.visible) {
+        if (!this.startupPending && (this.sessionLoading || this.sessionMenu.visible)) {
           this.closeSessions()
         }
         // Selection belongs to transcript/input content, never to empty chrome.
@@ -948,8 +953,16 @@ export class NanobotTui {
       return
     }
     if (this.sessionMenu.visible) {
+      if (this.sessionMenu.newChatSelected) {
+        this.startNewChat()
+        return
+      }
       const session = this.sessionMenu.choose()
       if (session) this.switchSession(session)
+      return
+    }
+    if (this.startupPending) {
+      if (this.ready) void this.openSessions()
       return
     }
     if (this.branchMenu.visible) {
@@ -1089,6 +1102,11 @@ export class NanobotTui {
   }
 
   accept(event: InboundEvent): void {
+    if (event.event === "ready" && this.startupPending) {
+      this.ready = true
+      void this.openSessions()
+      return
+    }
     if (event.event === "attached") {
       const switchedSession = Boolean(this.currentChatId && this.currentChatId !== event.chat_id)
       this.currentChatId = event.chat_id
@@ -1705,6 +1723,11 @@ export class NanobotTui {
   }
 
   private handleKey = (key: KeyEvent): void => {
+    if (this.startupPending && key.name === "escape") {
+      this.quit()
+      key.preventDefault()
+      return
+    }
     // The app receives keypresses before the focused Textarea. Seal the pending
     // submission first so this key is inserted into the next draft.
     if (this.submitPending) {
@@ -2148,7 +2171,7 @@ export class NanobotTui {
     const placeholder = this.composer.plainText
       ? null
       : this.sessionMenu.visible
-        ? "Search sessions"
+        ? this.startupPending ? "Wyszukaj sesję…" : "Search sessions"
         : this.branchMenu.visible
           ? "Search branch points"
           : this.activeTurn ? activePlaceholder : COMPOSER_PLACEHOLDER
@@ -2550,16 +2573,18 @@ export class NanobotTui {
         this.client.activeChatId,
         limit,
         this.defaultModelPreset,
+        Boolean(this.options.startWithSessions),
       )
       this.startSessionRefresh()
       this.sessionMenu.update(this.composer.plainText, limit)
       this.syncComposerPlaceholder()
       this.updateMeta()
-      this.status.content = sessions.length ? `${sessions.length} sessions` : "No saved sessions"
+      this.status.content = this.sessionPickerStatus(sessions.length)
     } catch (error) {
       if (loadId !== this.sessionLoadId) return
       this.sessionLoading = false
       this.status.content = error instanceof Error ? error.message : String(error)
+      if (this.startupPending) this.status.content += " · Enter ponów · Esc wyjdź"
     }
   }
 
@@ -2595,7 +2620,10 @@ export class NanobotTui {
       this.readyDetail = ""
       this.updateTitle()
       this.status.content = "Opening session…"
+      // The first chosen session needs the same history hydration as --session.
+      if (this.startupPending) this.options.chatId = session.chatId
       this.client.attach(session.chatId)
+      this.startupPending = false
     } catch (error) {
       this.status.content = error instanceof Error ? error.message : String(error)
     }
@@ -2634,6 +2662,7 @@ export class NanobotTui {
       this.updateTitle()
       this.status.content = "Starting a new chat…"
       this.client.newChat(this.runtimeControls.workspaceScope)
+      this.startupPending = false
     } catch (error) {
       this.status.content = error instanceof Error ? error.message : String(error)
     }
@@ -2764,12 +2793,17 @@ export class NanobotTui {
         this.client.activeChatId,
         this.defaultModelPreset,
       )
-      this.status.content = sessions.length ? `${sessions.length} sessions` : "No saved sessions"
+      this.status.content = this.sessionPickerStatus(sessions.length)
     } catch {
       // Keep the existing picker usable during a transient refresh failure.
     } finally {
       this.sessionRefreshPending = false
     }
+  }
+
+  private sessionPickerStatus(count: number): string {
+    if (this.startupPending) return `Zwei · sesje: ${count} · Esc wyjdź`
+    return count ? `${count} sessions` : "No saved sessions"
   }
 
   private openUsage(): void {

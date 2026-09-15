@@ -1,3 +1,4 @@
+import { PRODUCT_ICON } from "@/lib/branding";
 import {
   type ReactNode,
   type RefObject,
@@ -65,12 +66,13 @@ interface SidebarProps {
   onNewChatInProject: (projectPath: string, projectName: string) => void;
   onOpenSettings: () => void;
   onOpenApps: () => void;
+  onOpenAddons?: () => void;
   onOpenSkills: () => void;
   onOpenAutomations: () => void;
   onOpenChannels: () => void;
   onSettingsIntent?: () => void;
   onOpenSearch: () => void;
-  activeUtility?: "apps" | "skills" | "automations" | "channels" | null;
+  activeUtility?: "apps" | "skills" | "automations" | "channels" | "addons" | null;
   onToggleArchived: () => void;
   onCollapse?: () => void;
   onExpand?: () => void;
@@ -107,7 +109,7 @@ function isApplePlatform(): boolean {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [menuPortalContainer, setMenuPortalContainer] =
     useState<HTMLElement | null>(null);
   const collapsed = Boolean(props.collapsed);
@@ -181,7 +183,7 @@ export function Sidebar(props: SidebarProps) {
           )}
         >
           <img
-            src="/brand/nanobot_mark.svg"
+            src={PRODUCT_ICON}
             alt=""
             className="h-8 w-8 select-none object-contain"
             draggable={false}
@@ -209,6 +211,10 @@ export function Sidebar(props: SidebarProps) {
         )}
       >
         {collapsed && <>{newChatButton}{searchButton}</>}
+        {props.onOpenAddons && <SidebarActionButton collapsed={collapsed}
+          label={i18n.resolvedLanguage?.startsWith("pl") ? "Dodatki" : "Add-ons"}
+          onClick={props.onOpenAddons} active={props.activeUtility === "addons"}
+          selectionRef={activeActionRef} icon={<Blocks className="h-4 w-4" />} />}
         <SidebarActionButton
           collapsed={collapsed}
           label={t("sidebar.apps")}

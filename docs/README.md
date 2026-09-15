@@ -27,6 +27,7 @@ Pick the row that matches what you want to accomplish next:
 
 | Goal | Guide |
 |---|---|
+| Connect personal accounts, combine inboxes and extend memory (this fork) | [Personal add-ons](./personal-platform.md) |
 | Learn the browser workbench | [WebUI](./webui.md) |
 | Connect Telegram, Discord, Slack, Feishu, WeChat, Email, or another chat app | [Chat Apps](./chat-apps.md) |
 | Choose a hosted, OAuth, company, or local model | [Provider Cookbook](./provider-cookbook.md) |
@@ -77,6 +78,8 @@ These pages explain implementation and extension points. You do not need them to
 
 | Goal | Read |
 |---|---|
+| Maintain the Zwei fork and integrate upstream | [Fork maintenance](./fork-maintenance.md) |
+| Choose tabs or panels for a WebUI add-on | [WebUI add-on policy](./webui-addons.md) |
 | Understand source ownership and runtime flow | [Architecture](./architecture.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Add a channel package | [Channel Package Guide](./channel-package-guide.md) |

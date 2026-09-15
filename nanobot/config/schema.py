@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from nanobot.config.timezone import detect_system_timezone
 from nanobot.config_base import Base
 from nanobot.cron.types import CronSchedule
+from nanobot.personal.config import PersonalConfig
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
@@ -425,6 +426,7 @@ class Config(BaseSettings):
     _source_path: Path | None = PrivateAttr(default=None)
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    personal: PersonalConfig = Field(default_factory=PersonalConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)

@@ -1,3 +1,4 @@
+import { PRODUCT_ICON, PRODUCT_NAME, PRODUCT_REPOSITORY } from "@/lib/branding";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   ArrowUpCircle,
@@ -137,15 +138,16 @@ export function OverviewSettings({
 export function AboutSettings({ currentVersion }: { currentVersion?: string }) {
   const { t } = useTranslation();
   const links = [
-    { key: "documentation", icon: BookOpen, href: "https://nanobot.wiki/" },
-    { key: "sourceCode", icon: Github, href: "https://github.com/HKUDS/nanobot" },
-    { key: "reportIssue", icon: MessageCircle, href: "https://github.com/HKUDS/nanobot/issues" },
+    { key: "documentation", icon: BookOpen, href: `${PRODUCT_REPOSITORY}/tree/main/docs` },
+    { key: "sourceCode", icon: Github, href: PRODUCT_REPOSITORY },
+    { key: "reportIssue", icon: MessageCircle, href: `${PRODUCT_REPOSITORY}/issues` },
   ];
   return (
     <div className="settings-stack">
       <div className="flex flex-col items-center gap-4 py-6 text-center">
-        <img src="/brand/nanobot_mark.svg" alt="" className="h-16 w-16 select-none" draggable={false} />
-        <h1><img src="/brand/nanobot_wordmark.svg" alt="nanobot" className="h-auto w-40 select-none dark:brightness-150" draggable={false} /></h1>
+        <img src={PRODUCT_ICON} alt="" className="h-16 w-16 select-none" draggable={false} />
+        <h1 className="text-3xl font-semibold tracking-tight">{PRODUCT_NAME}</h1>
+        <p className="text-sm text-muted-foreground">Powered by <a href="https://github.com/HKUDS/nanobot" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">nanobot</a></p>
         <VersionCheckRow currentVersion={currentVersion} />
       </div>
       <SettingsGroup>

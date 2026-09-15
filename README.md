@@ -1,7 +1,6 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./images/readme-cover-dark.svg">
-  <img alt="nanobot README cover" src="./images/readme-cover-light.svg">
-</picture>
+<p align="center">
+  <img alt="Zwei" src="./webui/public/brand/zwei.svg" width="160" height="160">
+</p>
 
 <div align="center">
   <p>
@@ -32,7 +31,34 @@
   </p>
 </div>
 
-# nanobot
+# Zwei
+
+**Zwei** is [Szymon Gałka's fork](https://github.com/szymongalka/zwei)
+of [HKUDS/nanobot](https://github.com/HKUDS/nanobot). The fork is intended for selected extensions
+while keeping the original runtime and preserving a practical path for upstream updates.
+
+## This fork
+
+- **Maintainable extensions:** use existing extension points, keep core changes small,
+  and validate against a specific upstream revision. See [Fork maintenance](./docs/fork-maintenance.md).
+- **A consistent WebUI:** independent tools use tabs inside one Add-ons view;
+  conversation-specific details use context panels. See [WebUI add-on policy](./docs/webui-addons.md).
+  [Personal add-ons](./docs/personal-platform.md) implement account panels, a unified inbox,
+  durable archival with pgvector retrieval, and bounded autonomous development.
+  Optional features are disabled unless configured.
+- **Source development:** install this repository in editable mode using the source
+  instructions below. Keep runtime workspace, credentials, and personal data outside the source tree.
+- **Terminal session chooser:** run `zwei` to search saved WebUI/terminal sessions,
+  resume one with its history, model and workspace, or select **Nowa sesja** to create
+  a conversation in the configured agent workspace. Use ↑/↓ and Enter; Esc exits
+  without creating a conversation. Explicit commands such as `zwei status`,
+  `zwei --session websocket:CHAT_ID` and `zwei -m "Hello"` retain the nanobot CLI behavior.
+
+The rest of this README documents the inherited nanobot runtime. PyPI packages,
+one-command installers, upstream badges, and upstream release links refer to
+HKUDS/nanobot; they do not distribute this fork's custom source changes.
+Propose fork-specific changes through [this fork's pull requests](https://github.com/szymongalka/zwei/pulls)
+and retain upstream attribution when contributing fixes back.
 
 🐈 **nanobot** is an ultra-lightweight, open-source, self-hosted personal AI agent framework written in Python. It runs in a WebUI, terminal, or chat apps and combines tools, long-term memory, MCP integrations, model routing, multi-agent delegation, scheduled automation, and an OpenAI-compatible API in a small, readable core.
 
@@ -134,8 +160,8 @@ Clone the repository and install it in editable mode. Bun is required because th
 checkout runs the matching TUI directly instead of downloading an older release binary.
 
 ```bash
-git clone https://github.com/HKUDS/nanobot.git
-cd nanobot
+git clone https://github.com/szymongalka/zwei.git
+cd zwei
 python -m venv .venv
 ```
 
@@ -150,7 +176,7 @@ After that, the normal commands are identical to a stable install. `nanobot` run
 from this checkout, and `nanobot webui` rebuilds stale frontend assets automatically. A later
 `git pull --ff-only` updates the Python, TUI, and WebUI source together; rerun
 `python -m pip install -e .` when Python dependencies change. Contributors should also read
-[`CONTRIBUTING.md`](./CONTRIBUTING.md).
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) and the [fork update workflow](./docs/fork-maintenance.md).
 
 Verify the install:
 

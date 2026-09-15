@@ -1,7 +1,7 @@
 {
-  "name": "nanobot",
-  "short_name": "nanobot",
-  "description": "nanobot AI assistant",
+  "name": "Zwei",
+  "short_name": "Zwei",
+  "description": "Zwei personal AI assistant",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -13,25 +13,19 @@
   "orientation": "any",
   "icons": [
     {
-      "src": "/brand/nanobot_apple_touch.png",
+      "src": "/brand/zwei-180.png",
       "sizes": "180x180",
       "type": "image/png"
     },
     {
-      "src": "/brand/nanobot_icon_192.png",
+      "src": "/brand/zwei-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/brand/nanobot_icon_512.png",
+      "src": "/brand/zwei-512.png",
       "sizes": "512x512",
       "type": "image/png"
-    },
-    {
-      "src": "/brand/nanobot_icon_maskable.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
     }
   ]
 }

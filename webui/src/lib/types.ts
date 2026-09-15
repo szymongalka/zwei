@@ -477,6 +477,7 @@ export interface SidebarStatePayload {
 }
 
 export interface BootstrapResponse {
+  personal_enabled?: boolean;
   token?: string;
   api_token?: string;
   ws_path: string;
