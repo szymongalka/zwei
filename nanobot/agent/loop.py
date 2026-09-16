@@ -55,6 +55,7 @@ from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
 from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from nanobot.bus.events import INBOUND_META_USER_SHELL, InboundMessage, OutboundMessage
 from nanobot.bus.outbound_events import (
+    ProgressEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
@@ -279,6 +280,7 @@ class AgentLoop:
         max_tool_result_chars: int | None = None,
         provider_retry_mode: str = "standard",
         tool_hint_max_length: int | None = None,
+        progress_ping_seconds: float | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
@@ -337,6 +339,11 @@ class AgentLoop:
             max_history_messages
             if max_history_messages is not None
             else defaults.max_history_messages
+        )
+        self.progress_ping_seconds = (
+            progress_ping_seconds
+            if progress_ping_seconds is not None
+            else defaults.progress_ping_seconds
         )
         initial_context_window = (
             context_window_tokens
@@ -522,6 +529,7 @@ class AgentLoop:
             max_tool_result_chars=defaults.max_tool_result_chars,
             provider_retry_mode=defaults.provider_retry_mode,
             tool_hint_max_length=defaults.tool_hint_max_length,
+            progress_ping_seconds=defaults.progress_ping_seconds,
             restrict_to_workspace=config.tools.restrict_to_workspace,
             channels_config=config.channels,
             timezone=defaults.timezone,
@@ -1704,15 +1712,59 @@ class AgentLoop:
 
             ctx.events = EventSink(track_output, ctx.events.accepts)
 
-        await self._run_turn_stage(ctx, "restore", self._restore_turn)
-        await self._run_turn_stage(ctx, "compact", self._compact_session)
-        if await self._run_turn_stage(ctx, "command", self._dispatch_command):
+        monitor = self._start_progress_monitor(ctx)
+        try:
+            await self._run_turn_stage(ctx, "restore", self._restore_turn)
+            await self._run_turn_stage(ctx, "compact", self._compact_session)
+            if await self._run_turn_stage(ctx, "command", self._dispatch_command):
+                return ctx.outbound
+            await self._run_turn_stage(ctx, "build", self._build_turn)
+            await self._run_turn_stage(ctx, "run", self._run_turn)
+            await self._run_turn_stage(ctx, "save", self._persist_turn)
+            await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
             return ctx.outbound
-        await self._run_turn_stage(ctx, "build", self._build_turn)
-        await self._run_turn_stage(ctx, "run", self._run_turn)
-        await self._run_turn_stage(ctx, "save", self._persist_turn)
-        await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
-        return ctx.outbound
+        finally:
+            if monitor is not None:
+                monitor.cancel()
+                with suppress(asyncio.CancelledError):
+                    await monitor
+
+    def _start_progress_monitor(self, ctx: TurnContext) -> asyncio.Task[None] | None:
+        """Keep long interactive turns visible while no other progress is published.
+
+        Only user turns are monitored: automation turns (cron, dream, heartbeat)
+        deliver their own report and must not ping a chat that never asked.
+        """
+        interval = self.progress_ping_seconds
+        if (
+            not interval
+            or interval <= 0
+            or ctx.kind is not TurnKind.USER
+            or ctx.events.publish is None
+        ):
+            return None
+        return asyncio.create_task(self._progress_ping_loop(ctx, float(interval)))
+
+    async def _progress_ping_loop(self, ctx: TurnContext, interval: float) -> None:
+        """Publish a bounded still-working ping after each silent interval."""
+        publish = ctx.events.publish
+        if publish is None:  # pragma: no cover - guarded by the caller
+            return
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                elapsed_minutes = max(
+                    1,
+                    int((time.time() - ctx.turn_wall_started_at) // 60),
+                )
+                await publish(
+                    ProgressEvent(content=f"⏳ Pracuję dalej ({elapsed_minutes} min)…")
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - progress must never break a turn
+            logger.debug("[turn {}] Progress ping failed: {}", ctx.turn_id, exc)
+            return
 
     async def _run_turn_stage(
         self,
