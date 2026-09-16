@@ -3449,3 +3449,82 @@ async def test_typing_loop_survives_failed_action() -> None:
         await task
 
     assert attempts["count"] >= 2
+
+
+def _notify_channel(**config_overrides) -> TelegramChannel:
+    config = TelegramConfig(
+        enabled=True,
+        token="123:abc",
+        allow_from=["*"],
+        group_policy="open",
+        notify_token="456:def",
+        **config_overrides,
+    )
+    return TelegramChannel(config, MessageBus())
+
+
+def _notify_outbound(**overrides) -> OutboundMessage:
+    payload: dict = {"channel": "telegram", "chat_id": "42", "content": "ping", "metadata": {}}
+    payload.update(overrides)
+    return OutboundMessage(**payload)
+
+
+def test_should_send_via_notify_predicate() -> None:
+    channel = _notify_channel()
+
+    assert channel._should_send_via_notify(
+        _notify_outbound(metadata={INTERMEDIATE_SEND_FLAG: True})
+    )
+    assert not channel._should_send_via_notify(_notify_outbound(metadata={}))
+    assert not channel._should_send_via_notify(
+        _notify_outbound(metadata={INTERMEDIATE_SEND_FLAG: True, "notify_target": "main"})
+    )
+    assert channel._should_send_via_notify(
+        _notify_outbound(metadata={"notify_target": "notify"})
+    )
+    assert not channel._should_send_via_notify(
+        _notify_outbound(metadata={INTERMEDIATE_SEND_FLAG: True}, buttons=[["A"]])
+    )
+
+
+def test_should_send_via_notify_disabled_without_token() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+
+    assert not channel._should_send_via_notify(
+        _notify_outbound(metadata={INTERMEDIATE_SEND_FLAG: True})
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_via_notify_bot_sends_text(monkeypatch) -> None:
+    channel = _notify_channel()
+    fake = _FakeBot()
+    monkeypatch.setattr(channel, "_get_notify_bot", lambda: fake)
+    monkeypatch.setattr(channel, "_notify_bot_ready", True)
+
+    await channel._send_via_notify_bot(
+        42, _notify_outbound(metadata={INTERMEDIATE_SEND_FLAG: True}, content="hello")
+    )
+
+    assert fake.sent_messages and fake.sent_messages[0].get("text") == "hello"
+
+
+@pytest.mark.asyncio
+async def test_send_falls_back_to_main_bot_when_notify_fails(monkeypatch) -> None:
+    channel = _notify_channel()
+    app = _install_ready_app(channel)
+
+    async def _boom(chat_id, msg) -> None:
+        raise RuntimeError("notify down")
+
+    monkeypatch.setattr(channel, "_should_send_via_notify", lambda msg: True)
+    monkeypatch.setattr(channel, "_send_via_notify_bot", _boom)
+
+    await channel.send(
+        _notify_outbound(metadata={INTERMEDIATE_SEND_FLAG: True}, content="fallback")
+    )
+
+    assert any(m.get("text") == "fallback" for m in app.bot.sent_messages)

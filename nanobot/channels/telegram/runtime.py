@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 from telegram import (
+    Bot,
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -415,6 +416,10 @@ class TelegramConfig(Base):
 
     enabled: bool = False
     token: str = ""
+    # Optional second bot token used only for outbound automation notifications
+    # (cron/heartbeat/message-tool sends without buttons). Unset = disabled and
+    # everything is delivered by the conversation bot (upstream behavior).
+    notify_token: str | None = None
     mode: Literal["polling", "webhook"] = "polling"
     allow_from: list[str] = Field(default_factory=list)
     proxy: str | None = None
@@ -553,6 +558,8 @@ class TelegramChannel(BaseChannel):
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self._app: TelegramApplication | None = None
+        self._notify_bot: Bot | None = None
+        self._notify_bot_ready: bool = False
         self._typing_tasks: dict[str, asyncio.Task[None]] = {}  # chat_id -> typing loop task
         self._typing_interval: float = 4.0  # seconds between typing actions
         self._media_group_buffers: dict[str, dict[str, Any]] = {}
@@ -1059,6 +1066,76 @@ class TelegramChannel(BaseChannel):
         buf.message_id = sent.message_id
         buf.draft_id = None
 
+    def _should_send_via_notify(self, msg: OutboundMessage) -> bool:
+        """Decide whether ``msg`` is delivered by the optional notify bot.
+
+        Automation notifications are message-tool sends without buttons
+        (``INTERMEDIATE_SEND_FLAG``) plus anything explicitly marked with
+        ``notify_target=notify``; ``notify_target=main`` always wins. Messages
+        with inline buttons are interactive and always use the main bot.
+        """
+        if not self.config.notify_token:
+            return False
+        if getattr(msg, "buttons", None):
+            return False
+        target = msg.metadata.get("notify_target")
+        if target == "main":
+            return False
+        if target == "notify":
+            return True
+        return bool(msg.metadata.get(INTERMEDIATE_SEND_FLAG))
+
+    def _get_notify_bot(self) -> Bot:
+        if self._notify_bot is None:
+            self._notify_bot = Bot(token=self.config.notify_token or "")
+        return self._notify_bot
+
+    async def _send_via_notify_bot(self, chat_id: int, msg: OutboundMessage) -> None:
+        """Deliver ``msg`` through the notify bot (text and media, no buttons)."""
+        bot = self._get_notify_bot()
+        if not self._notify_bot_ready:
+            await bot.initialize()
+            self._notify_bot_ready = True
+
+        for media_path in (msg.media or []):
+            media_type = self._get_media_type(media_path)
+            param = {
+                "photo": "photo",
+                "video": "video",
+                "voice": "voice",
+                "audio": "audio",
+            }.get(media_type, "document")
+            extra: dict[str, Any] = {}
+            if media_type == "video":
+                extra["supports_streaming"] = True
+            sender = getattr(bot, f"send_{param}")
+            if self._is_remote_media_url(media_path):
+                ok, error = validate_url_target(media_path)
+                if not ok:
+                    raise ValueError(f"unsafe media URL: {error}")
+                await sender(chat_id=chat_id, **{param: media_path}, **extra)
+                continue
+            media_bytes = Path(media_path).read_bytes()
+            await sender(
+                chat_id=chat_id,
+                **{param: media_bytes},
+                filename=Path(media_path).name,
+                **extra,
+            )
+
+        if msg.content and msg.content != "[empty message]":
+            text = msg.content
+            if msg.metadata.get("render_as") == "text":
+                text = _telegram_command_text(text)
+            chunks = _split_telegram_markdown(text, TELEGRAM_MAX_MESSAGE_LEN)
+            for chunk in chunks:
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id, text=_markdown_to_telegram_html(chunk), parse_mode="HTML"
+                    )
+                except BadRequest:
+                    await bot.send_message(chat_id=chat_id, text=chunk)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
         app = await self._wait_for_app()
@@ -1097,6 +1174,17 @@ class TelegramChannel(BaseChannel):
                     message_id=reply_to_message_id,
                     allow_sending_without_reply=True
                 )
+
+        # Automation notifications (cron/heartbeat/message-tool sends without
+        # buttons) may go out through the dedicated notify bot so they never
+        # mix with the conversation bot. Delivery falls back to the main bot
+        # when the notify bot is unreachable or rejects the chat.
+        if self._should_send_via_notify(msg):
+            try:
+                await self._send_via_notify_bot(chat_id, msg)
+                return
+            except Exception:
+                self.logger.exception("notify bot delivery failed; falling back to the main bot")
 
         # Compaction notices collapse into one message: the started phase sends
         # it, a terminal phase edits it in place instead of posting a new one.
