@@ -27,6 +27,19 @@ from nanobot.providers.base import (
 # Circuit breaker tuned to match OpenAICompatProvider's Responses API breaker.
 _PRIMARY_FAILURE_THRESHOLD = 3
 _PRIMARY_COOLDOWN_S = 60
+# Quota/auth-style outages do not clear within a minute; probe less often.
+_PRIMARY_QUOTA_COOLDOWN_S = 600
+_PRIMARY_QUOTA_ERROR_KINDS = frozenset({
+    "rate_limit",
+    "overloaded",
+    "authentication",
+    "auth",
+    "permission",
+})
+# Fallback models get their own breaker so a dead candidate is skipped
+# instead of being retried on every failover walk.
+_FALLBACK_FAILURE_THRESHOLD = 3
+_FALLBACK_COOLDOWN_S = 300
 _FALLBACK_ERROR_KINDS = frozenset({
     "timeout",
     "connection",
@@ -140,6 +153,9 @@ class FallbackProvider(LLMProvider):
         self._has_fallbacks = bool(fallback_presets)
         self._primary_failures = 0
         self._primary_tripped_at: float | None = None
+        self._primary_tripped_kind: str | None = None
+        self._fallback_failures: dict[str, int] = {}
+        self._fallback_tripped_at: dict[str, float] = {}
 
     @property
     def generation(self) -> GenerationSettings:
@@ -194,7 +210,23 @@ class FallbackProvider(LLMProvider):
         """Return True if the primary provider is not currently tripped."""
         if self._primary_tripped_at is None:
             return True
-        if time.monotonic() - self._primary_tripped_at >= _PRIMARY_COOLDOWN_S:
+        if time.monotonic() - self._primary_tripped_at >= self._primary_cooldown_s():
+            # Half-open: allow one probe attempt.
+            return True
+        return False
+
+    def _primary_cooldown_s(self) -> float:
+        """Quota/auth-style outages do not clear within a minute; probe less often."""
+        if (self._primary_tripped_kind or "") in _PRIMARY_QUOTA_ERROR_KINDS:
+            return _PRIMARY_QUOTA_COOLDOWN_S
+        return _PRIMARY_COOLDOWN_S
+
+    def _fallback_available(self, model: str) -> bool:
+        """Return True if a fallback model is not currently circuit-broken."""
+        tripped_at = self._fallback_tripped_at.get(model)
+        if tripped_at is None:
+            return True
+        if time.monotonic() - tripped_at >= _FALLBACK_COOLDOWN_S:
             # Half-open: allow one probe attempt.
             return True
         return False
@@ -469,6 +501,7 @@ class FallbackProvider(LLMProvider):
             if response.finish_reason != "error":
                 self._primary_failures = 0
                 self._primary_tripped_at = None
+                self._primary_tripped_kind = None
                 return response
             primary_response = response
             primary_error = (response.content or primary_error)[:120]
@@ -503,17 +536,27 @@ class FallbackProvider(LLMProvider):
             self._primary_failures += 1
             if self._primary_failures >= _PRIMARY_FAILURE_THRESHOLD:
                 self._primary_tripped_at = time.monotonic()
+                self._primary_tripped_kind = (response.error_kind or "").lower()
                 logger.warning(
-                    "Primary model '{}' circuit open after {} consecutive failures",
-                    primary_model, self._primary_failures,
+                    "Primary model '{}' circuit open after {} consecutive failures "
+                    "(cooldown {}s)",
+                    primary_model, self._primary_failures, self._primary_cooldown_s(),
                 )
         else:
             logger.debug("Primary model '{}' circuit open; skipping", primary_model)
 
         last_response = primary_response
         primary_skipped = not primary_was_attempted
+        attempted_fallbacks = 0
         for idx, fallback in enumerate(self._fallback_presets):
             fallback_model = fallback.model
+            if not self._fallback_available(fallback_model):
+                logger.debug(
+                    "Fallback model '{}' circuit open; skipping",
+                    fallback_model,
+                )
+                continue
+            attempted_fallbacks += 1
             if has_streamed is not None and has_streamed[0]:
                 is_timeout = (
                     last_response is not None
@@ -594,6 +637,8 @@ class FallbackProvider(LLMProvider):
                 )
 
             if fallback_response.finish_reason != "error":
+                self._fallback_failures.pop(fallback_model, None)
+                self._fallback_tripped_at.pop(fallback_model, None)
                 # Do not publish a model switch merely because a fallback was
                 # attempted.  A fallback can fail just like the primary, and
                 # the WebUI would otherwise show a misleading success signal.
@@ -606,6 +651,14 @@ class FallbackProvider(LLMProvider):
                 return fallback_response
 
             last_response = fallback_response
+            fallback_failures = self._fallback_failures.get(fallback_model, 0) + 1
+            self._fallback_failures[fallback_model] = fallback_failures
+            if fallback_failures >= _FALLBACK_FAILURE_THRESHOLD:
+                self._fallback_tripped_at[fallback_model] = time.monotonic()
+                logger.warning(
+                    "Fallback model '{}' circuit open after {} consecutive failures",
+                    fallback_model, fallback_failures,
+                )
             logger.warning(
                 "Fallback '{}' also failed: {}",
                 fallback_model,
@@ -613,8 +666,10 @@ class FallbackProvider(LLMProvider):
             )
 
         logger.warning(
-            "All {} fallback model(s) failed",
+            "All {} fallback model(s) failed ({} attempted, {} skipped by breaker)",
             len(self._fallback_presets),
+            attempted_fallbacks,
+            len(self._fallback_presets) - attempted_fallbacks,
         )
         # Return the last error response we saw (primary or last fallback).
         if last_response is not None:
