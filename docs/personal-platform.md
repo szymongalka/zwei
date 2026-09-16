@@ -110,8 +110,11 @@ guarantee that every answer recalls every detail.
 
 The `personal_archive` agent tool exposes status, search, paged reads, the inbox,
 saved-account synchronization and authorized sending. Retrieved context is bounded
-and explicitly marked as untrusted source material. Account administration remains
-in the authenticated WebUI.
+and explicitly marked as untrusted source material. Runtime-context retrieval is
+best-effort: excerpts are condensed projections of stored text with a bounded
+length, near-empty markup remnants produce no block, and a slow or failing
+retrieval is skipped after `retrievalTimeoutSeconds` (default 2) instead of gating
+the turn. Account administration remains in the authenticated WebUI.
 
 ## Autonomous development
 

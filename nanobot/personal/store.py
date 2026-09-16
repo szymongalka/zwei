@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import html
 import json
 import os
 import re
@@ -41,6 +42,17 @@ def searchable_text(value: object) -> str:
             and not str(key).endswith("_b64")
         )
     return str(value) if value is not None else ""
+
+
+def readable_excerpt(text: str, limit: int) -> str:
+    """Whitespace-condensed retrieval projection; the raw archive stays untouched.
+
+    Archived mail bodies keep their stored form, so markup remnants such as
+    entities and line-break runs would otherwise dominate excerpts. Returned
+    text is never longer than ``limit`` characters and may be empty.
+    """
+    condensed = re.sub(r"\s+", " ", html.unescape(text)).strip()
+    return condensed[: max(0, limit)]
 
 
 class PersonalStore:
