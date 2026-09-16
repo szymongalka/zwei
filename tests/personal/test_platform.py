@@ -414,3 +414,60 @@ def test_retrieval_timeout_is_configurable_and_bounded():
     assert PersonalConfig(data_dir="x").retrieval_timeout_seconds == 2.0
     with pytest.raises(ValidationError):
         PersonalConfig(data_dir="x", retrieval_timeout_seconds=0.1)
+
+
+def test_excerpt_similarity_flags_near_duplicates_only():
+    from nanobot.personal.service import excerpt_similarity
+    same = "Regulamin świadczenia usług " + "postanowienie " * 40
+    assert excerpt_similarity(same, same.upper()) == 1.0
+    assert excerpt_similarity(same, same.replace("postanowienie", "warunek", 1)) > 0.7
+    assert excerpt_similarity(same, "Faktura za prąd numer 123/2026") < 0.2
+    assert excerpt_similarity("", "") == 1.0
+    assert excerpt_similarity("ab", same) == 0.0
+
+
+def test_duplicate_collapsing_is_configurable_and_disabled_outside_its_range():
+    from nanobot.personal.service import collapse_duplicate_excerpts
+    same = "Regulamin świadczenia usług " + "postanowienie " * 40
+    distinct = "Faktura za prąd numer 123/2026, kwota 250 zł"
+    items = [{"id": "a", "excerpt": same}, {"id": "b", "excerpt": same},
+             {"id": "c", "excerpt": same}, {"id": "d", "excerpt": distinct}]
+    assert [item["id"] for item in collapse_duplicate_excerpts(items, 0.7)] == ["a", "d"]
+    # 1.0 keeps exact duplicates (filter disabled); 0.0 is the degenerate case and also disabled.
+    assert len(collapse_duplicate_excerpts(items, 1.0)) == 4
+    assert len(collapse_duplicate_excerpts(items, 0.0)) == 4
+    assert PersonalConfig(data_dir="x").retrieval_dedup_threshold == 0.7
+    with pytest.raises(ValidationError):
+        PersonalConfig(data_dir="x", retrieval_dedup_threshold=2.0)
+
+
+async def test_runtime_context_keeps_one_copy_of_repeated_excerpts(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    repeated = "Regulamin świadczenia usług " + "postanowienie " * 40
+    for index in range(4):
+        service.store.put("mail:one", f"INBOX:1:{index}", {
+            "headers": {"Subject": "Regulamin"}, "body": repeated})
+    service.store.put("mail:one", "INBOX:1:9", {
+        "headers": {"Subject": "Faktura"},
+        "body": "Faktura za prąd numer 123/2026, kwota 250 zł, termin płatności 14 dni"})
+    request = RequestContext(channel="telegram", chat_id="1",
+                             original_user_text="regulamin faktura postanowienie")
+    block = await service.runtime_context(request)
+    assert block is not None
+    # Four near-identical records reach the prompt as one, and the distinct record survives.
+    assert block.content.count("Regulamin świadczenia usług") == 1
+    assert block.content.count("Faktura za prąd numer 123/2026") == 1
+
+
+async def test_runtime_context_dedup_can_be_disabled_by_config(tmp_path):
+    service = PersonalService(
+        PersonalConfig(data_dir=str(tmp_path / "data"), retrieval_dedup_threshold=1.0), tmp_path)
+    repeated = "Regulamin świadczenia usług " + "postanowienie " * 40
+    for index in range(3):
+        service.store.put("mail:one", f"INBOX:1:{index}", {
+            "headers": {"Subject": "Regulamin"}, "body": repeated})
+    request = RequestContext(channel="telegram", chat_id="1",
+                             original_user_text="regulamin postanowienie")
+    block = await service.runtime_context(request)
+    assert block is not None
+    assert block.content.count("Regulamin świadczenia usług") == 3

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,42 @@ from nanobot.session.manager import SessionManager
 EXCERPT_LIMIT = 600
 # Below this many usable characters an excerpt adds noise, not recall.
 MIN_EXCERPT_CHARS = 32
+# Distinct records matter more than repeated copies of one, so candidates are over-fetched.
+RETRIEVAL_LIMIT = 4
+RETRIEVAL_CANDIDATES = 8
+
+
+def excerpt_similarity(left: str, right: str) -> float:
+    """Trigram Jaccard similarity of two whitespace-normalized excerpts (1.0 = same text)."""
+    first = re.sub(r"\s+", " ", left.lower()).strip()
+    second = re.sub(r"\s+", " ", right.lower()).strip()
+    if first == second:
+        return 1.0
+    if len(first) < 3 or len(second) < 3:
+        return 0.0
+    left_trigrams = {first[index:index + 3] for index in range(len(first) - 2)}
+    right_trigrams = {second[index:index + 3] for index in range(len(second) - 2)}
+    union = left_trigrams | right_trigrams
+    return len(left_trigrams & right_trigrams) / len(union) if union else 0.0
+
+
+def collapse_duplicate_excerpts(items: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
+    """Keep the highest-ranked copy of each near-duplicate excerpt.
+
+    ``threshold`` is the similarity above which a candidate repeats an already
+    accepted excerpt; a value outside ``(0, 1)`` disables the filter (1.0 means
+    "only exact duplicates", which are still kept). Used only when projecting
+    records into runtime context - ranking and the raw archive stay untouched.
+    """
+    if not 0.0 < threshold < 1.0:
+        return items
+    kept: list[dict[str, Any]] = []
+    for item in items:
+        excerpt = item.get("excerpt", "")
+        if any(excerpt_similarity(excerpt, other.get("excerpt", "")) > threshold for other in kept):
+            continue
+        kept.append(item)
+    return kept
 
 
 class PersonalAction(BaseModel):
@@ -163,13 +200,15 @@ class PersonalService:
             return None
         try:
             results = await asyncio.wait_for(
-                asyncio.to_thread(self.search, query[:4000], 4),
+                asyncio.to_thread(self.search, query[:4000], RETRIEVAL_CANDIDATES),
                 timeout=self.config.retrieval_timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - retrieval is best-effort and never gates a turn
             logger.warning("Personal archive retrieval skipped ({})", type(exc).__name__)
             return None
         informative = [item for item in results if len(item["excerpt"]) >= MIN_EXCERPT_CHARS]
+        informative = collapse_duplicate_excerpts(
+            informative, self.config.retrieval_dedup_threshold)[:RETRIEVAL_LIMIT]
         if not informative:
             return None
         encoded = json.dumps(informative, ensure_ascii=False).replace("[", "\\u005b").replace("]", "\\u005d")
