@@ -99,7 +99,7 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "activity",
     ),
     BuiltinCommandSpec(
-        "/model-menu",
+        "/model_menu",
         "Open model menu",
         "Show the interactive model picker (provider -> family -> preset).",
         "brain",
@@ -1107,7 +1107,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
-    router.exact("/model-menu", cmd_model_menu)
+    router.exact("/model_menu", cmd_model_menu)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
     router.exact("/goal", cmd_goal)
