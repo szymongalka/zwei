@@ -1,5 +1,6 @@
 """Durability and side-effect boundaries for the optional personal platform."""
 
+import asyncio
 import base64
 import gzip
 import json
@@ -471,3 +472,29 @@ async def test_runtime_context_dedup_can_be_disabled_by_config(tmp_path):
     block = await service.runtime_context(request)
     assert block is not None
     assert block.content.count("Regulamin świadczenia usług") == 3
+
+
+def test_memory_warmup_loads_the_model_and_remote_schema_before_the_first_turn(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    calls: list[object] = []
+    vector = MagicMock()
+    vector.initialize = lambda: calls.append("initialize")
+    vector.embed = lambda values: calls.append(("embed", values)) or [[0.0] * 384]
+    service.vector = vector
+    asyncio.run(service._warm_memory_once())
+    assert calls == ["initialize", ("embed", ["warmup"])]
+    assert service.warm_memory() is True
+    assert service.store.checkpoint("remote_state", "pending") == "pending"  # warmup is not a sync
+
+
+def test_memory_warmup_failure_never_gates_startup(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    vector = MagicMock()
+    vector.initialize = MagicMock(side_effect=OSError("remote unavailable"))
+    service.vector = vector
+    asyncio.run(service._warm_memory_once())
+    assert vector.initialize.called
+
+    without_remote = PersonalService(PersonalConfig(data_dir=str(tmp_path / "other")), tmp_path)
+    asyncio.run(without_remote._warm_memory_once())
+    assert without_remote.warm_memory() is False
