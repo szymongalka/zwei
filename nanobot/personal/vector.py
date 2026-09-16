@@ -83,6 +83,12 @@ class VectorMemory:
         self.initialize()
         pending = self.store.pending(batch_size)
         for document in pending:
+            if document.get("superseded"):
+                # A newer version of the same item owns the projection; the archive keeps
+                # this copy, but the rebuildable remote index must not return both.
+                self._drop_superseded(document["id"])
+                self.store.mark_synced([document["id"]])
+                continue
             parts = chunks(document["text"])
             embeddings = self.embed(parts)
             with self.connect() as db:
@@ -112,6 +118,14 @@ class VectorMemory:
             with self.store.db() as local:
                 local.execute("UPDATE snapshot_outbox SET synced=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
         return len(pending)
+
+    def _drop_superseded(self, identifier: str) -> None:
+        """Remove the rebuildable projection of one archived version from the remote index."""
+        with self.connect() as db:
+            db.execute("DELETE FROM personal_chunks WHERE id=%s AND namespace=%s",
+                       (identifier, self.store.namespace))
+            db.execute("DELETE FROM personal_documents WHERE id=%s AND namespace=%s",
+                       (identifier, self.store.namespace))
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         self.initialize()

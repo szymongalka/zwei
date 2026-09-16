@@ -108,6 +108,16 @@ or bytes represented only by an external attachment path. Keep the original medi
 storage backed up too. Retrieval can still miss a fact; full archival is not a
 guarantee that every answer recalls every detail.
 
+Calendar resources are archived exactly as the DAV server returned them, while the
+search projection keeps the event's own fields — local time window, summary, location
+and description — so `VTIMEZONE`, attendee and free/busy noise cannot crowd out the
+facts a person searches for. Each resource carries a version derived from its
+`LAST-MODIFIED`/`DTSTAMP` values, so an edited event supersedes its predecessor: the
+raw archive keeps both versions for provenance, `personal_archive search` returns the
+current one, and the asynchronous remote sync deletes the stale projection instead of
+indexing the same event twice. Records ingested before events were projected are
+re-projected during account synchronization, which only rewrites the search view.
+
 The `personal_archive` agent tool exposes status, search, paged reads, the inbox,
 saved-account synchronization and authorized sending. Retrieved context is bounded
 and explicitly marked as untrusted source material. Runtime-context retrieval is
