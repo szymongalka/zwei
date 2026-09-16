@@ -128,6 +128,18 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
+    max_tool_iterations_background: int = Field(
+        default=120,
+        ge=1,
+        validation_alias=AliasChoices("maxToolIterationsBackground"),
+        serialization_alias="maxToolIterationsBackground",
+    )  # Iteration budget for non-interactive sources (dream, cron, api, system)
+    max_history_messages: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices("maxHistoryMessages"),
+        serialization_alias="maxHistoryMessages",
+    )  # Max prior-turn messages sent per request; 0 disables windowing
     max_concurrent_subagents: int = Field(default=4, ge=1)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"

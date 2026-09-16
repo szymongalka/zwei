@@ -554,7 +554,9 @@ async def test_agent_loop_syncs_updated_max_iterations_before_run(tmp_path):
 
     async def fake_run(spec):
         assert spec.max_iterations == 55
-        assert loop.subagents.max_iterations == 55
+        # Subagents keep at least the background budget even when the
+        # interactive budget is lowered at runtime.
+        assert loop.subagents.max_iterations == max(55, loop.max_iterations_background)
         return SimpleNamespace(
             stop_reason="done",
             final_content="done",

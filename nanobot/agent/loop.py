@@ -24,7 +24,12 @@ from nanobot.agent import context as agent_context
 from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
-from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
+from nanobot.agent.context import (
+    ContextBuilder,
+    PersistedPromptContextResolver,
+    TranscriptInput,
+    apply_history_window,
+)
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
@@ -267,6 +272,8 @@ class AgentLoop:
         workspace: Path,
         model: str | None = None,
         max_iterations: int | None = None,
+        max_iterations_background: int | None = None,
+        max_history_messages: int | None = None,
         max_concurrent_subagents: int | None = None,
         context_window_tokens: int | None = None,
         max_tool_result_chars: int | None = None,
@@ -320,6 +327,16 @@ class AgentLoop:
         initial_model = model or provider.get_default_model()
         self.max_iterations = (
             max_iterations if max_iterations is not None else defaults.max_tool_iterations
+        )
+        self.max_iterations_background = (
+            max_iterations_background
+            if max_iterations_background is not None
+            else defaults.max_tool_iterations_background
+        )
+        self.max_history_messages = (
+            max_history_messages
+            if max_history_messages is not None
+            else defaults.max_history_messages
         )
         initial_context_window = (
             context_window_tokens
@@ -498,6 +515,8 @@ class AgentLoop:
             workspace=config.workspace_path,
             model=model,
             max_iterations=defaults.max_tool_iterations,
+            max_iterations_background=defaults.max_tool_iterations_background,
+            max_history_messages=defaults.max_history_messages,
             max_concurrent_subagents=defaults.max_concurrent_subagents,
             context_window_tokens=context_window_tokens,
             max_tool_result_chars=defaults.max_tool_result_chars,
@@ -523,7 +542,11 @@ class AgentLoop:
 
     def _sync_subagent_runtime_limits(self) -> None:
         """Keep subagent runtime limits aligned with mutable loop settings."""
-        self.subagents.max_iterations = self.max_iterations
+        # Subagents run inside a turn but do heavy work; give them at least the
+        # background budget so a small interactive budget does not strangle them.
+        self.subagents.max_iterations = max(
+            self.max_iterations, self.max_iterations_background
+        )
 
     def invalidate_runtime_config(self) -> None:
         """Invalidate runtime config for lazy refresh at the next admission."""
@@ -721,7 +744,7 @@ class AgentLoop:
         """Capture the persisted history and fresh input as separate transcript parts."""
         assert ctx.session is not None
         return TranscriptInput(
-            history=ctx.history,
+            history=apply_history_window(ctx.history, self.max_history_messages),
             current_message=ctx.msg.content,
             media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
             session_summary=ctx.pending_summary,
@@ -1167,11 +1190,20 @@ class AgentLoop:
                 ephemeral=ephemeral,
                 run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
             ))
+            llm_source = source_from_request(
+                active_session_key,
+                channel=request_ctx.channel,
+                metadata=request_metadata,
+            )
+            turn_max_iterations = (
+                self.max_iterations if llm_source == "user"
+                else self.max_iterations_background
+            )
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=None,
                 tools=effective_tools,
                 runtime=runtime,
-                max_iterations=self.max_iterations,
+                max_iterations=turn_max_iterations,
                 max_tool_result_chars=self.max_tool_result_chars,
                 transcript_input=transcript_input,
                 transcript_builder=transcript_builder,
@@ -1210,11 +1242,7 @@ class AgentLoop:
                     message_metadata=request_metadata,
                 ),
                 provider_state=provider_state,
-                llm_usage_source=source_from_request(
-                    active_session_key,
-                    channel=request_ctx.channel,
-                    metadata=request_metadata,
-                ),
+                llm_usage_source=llm_source,
                 events=events,
             ))
         finally:
@@ -1225,7 +1253,7 @@ class AgentLoop:
         if session is not None and not ephemeral:
             session.provider_state = result.provider_state
         if result.stop_reason == "max_iterations":
-            logger.warning("Max iterations ({}) reached", self.max_iterations)
+            logger.warning("Max iterations ({}) reached", turn_max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
                 stop_reason=result.stop_reason,
                 pending_queue_available=pending_queue is not None and session is not None,

@@ -86,6 +86,27 @@ class TranscriptInput:
         return 1 + len(self.history) + (self.current_message is not None)
 
 
+def apply_history_window(
+    history: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Cap the sent history to its most recent *limit* messages.
+
+    The cut point is moved forward to the next ``user`` message so the window
+    never begins with an orphaned assistant tool-call or tool result. When no
+    safe boundary exists inside the window, the history is returned unchanged.
+    ``limit <= 0`` disables windowing.
+    """
+    if limit <= 0 or len(history) <= limit:
+        return history
+    start = len(history) - limit
+    while start < len(history) and history[start].get("role") != "user":
+        start += 1
+    if start >= len(history):
+        return history
+    return history[start:]
+
+
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
