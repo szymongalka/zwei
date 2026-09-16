@@ -20,6 +20,7 @@ class PersonalConfig(Base):
     evolution_min_samples: int = Field(default=12, ge=6)
     evolution_max_trials: int = Field(default=4, ge=1, le=12)
     retrieval_timeout_seconds: float = Field(default=2.0, ge=0.5, le=30)
+    retrieval_dedup_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     development_enabled: bool = False
     development_interval_seconds: int = Field(default=86400, ge=3600)
     development_timeout_seconds: int = Field(default=1200, ge=60, le=3600)

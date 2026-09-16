@@ -114,7 +114,12 @@ and explicitly marked as untrusted source material. Runtime-context retrieval is
 best-effort: excerpts are condensed projections of stored text with a bounded
 length, near-empty markup remnants produce no block, and a slow or failing
 retrieval is skipped after `retrievalTimeoutSeconds` (default 2) instead of gating
-the turn. Account administration remains in the authenticated WebUI.
+the turn. Candidates are over-fetched and a record is projected only when its
+excerpt similarity to every already accepted record stays at or below
+`retrievalDedupThreshold` (default 0.7, trigram Jaccard on normalized text; 1.0
+disables the filter), so repeated copies of one record cannot crowd out distinct
+records. Ranking and the raw archive are unaffected. Account administration
+remains in the authenticated WebUI.
 
 ## Autonomous development
 
