@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
@@ -103,6 +105,8 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Open model menu",
         "Show the interactive model picker (provider -> family -> preset).",
         "brain",
+        "[provider | family | pomiary]",
+        accepts_args=True,
     ),
     BuiltinCommandSpec(
         "/model",
@@ -454,24 +458,149 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-MODEL_MENU_BUTTONS: list[list[str]] = [
-    ["Menu modeli: ChatGPT", "Menu modeli: OpenRouter"],
-    ["Menu modeli: Gemini", "Menu modeli: pomiary"],
-]
+MODEL_MENU_DATA_FILENAME = "model-menu.json"
+
+
+def _load_model_menu_data(workspace: Path | str | None) -> dict[str, Any] | None:
+    """Load the optional workspace menu descriptor consumed by ``/model_menu``."""
+    if workspace is None:
+        return None
+    try:
+        raw = json.loads((Path(workspace) / MODEL_MENU_DATA_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    providers = raw.get("providers") if isinstance(raw, dict) else None
+    if not isinstance(providers, dict) or not providers:
+        return None
+    return raw
+
+
+def _fallback_model_menu_data(loop: AgentLoop) -> dict[str, Any]:
+    """Build a minimal menu straight from configured presets (no descriptor file)."""
+    providers: dict[str, dict[str, Any]] = {}
+    presets: dict[str, dict[str, str]] = {}
+    for name, preset in loop.model_presets.items():
+        provider = (getattr(preset, "provider", None) or "Inne").strip() or "Inne"
+        provider_label = provider.replace("_", " ").title()
+        family = f"{provider_label} presety"
+        bucket = providers.setdefault(provider_label, {"families": {}})
+        bucket["families"].setdefault(family, []).append(name)
+        presets[name] = {
+            "model": getattr(preset, "model", ""),
+            "reasoning": str(getattr(preset, "reasoning_effort", None) or "domyślny"),
+            "context": f"{getattr(preset, 'context_window_tokens', 'n/d')}",
+        }
+    return {"providers": providers, "presets": presets}
+
+
+def _menu_buttons(rows: list[list[str]]) -> list[list[str]]:
+    return [row for row in rows if row]
+
+
+def _menu_provider_level(data: dict[str, Any]) -> tuple[str, list[list[str]]]:
+    names = list(data["providers"].keys())
+    rows = [[f"/model_menu {name}" for name in names[i : i + 2]] for i in range(0, len(names), 2)]
+    rows.append(["/model_menu pomiary"])
+    content = (
+        "Menu modeli — wybierz dostawcę. Dalej: rodzina → preset; przy każdym presecie "
+        "reasoning, wagi, kontekst, cena i zmierzony czas odpowiedzi.\n"
+        "Zmiana presetu: /model <nazwa>. Menu działa bez udziału modelu."
+    )
+    return content, _menu_buttons(rows)
+
+
+def _menu_family_level(data: dict[str, Any], provider: str) -> tuple[str, list[list[str]]]:
+    families = data["providers"][provider].get("families", {})
+    rows = [
+        [f"/model_menu {family}" for family in list(families)[i : i + 2]]
+        for i in range(0, len(families), 2)
+    ]
+    rows.append(["/model_menu"])
+    content = f"Menu modeli — {provider}: wybierz rodzinę."
+    return content, _menu_buttons(rows)
+
+
+def _menu_preset_card(name: str, info: dict[str, Any]) -> str:
+    fields = [
+        f"model: {info['model']}",
+        f"reasoning: {info.get('reasoning', 'n/d')}",
+        f"wagi: {info.get('weights', 'n/d')}",
+        f"kontekst: {info.get('context', 'n/d')}",
+    ]
+    output = info.get("output")
+    if output:
+        fields.append(f"wyjście: {output}")
+    fields.append(f"cena: {info.get('price', 'n/d')}")
+    fields.append(f"czas: {info.get('time', 'n/d')}")
+    card = f"• {name} — " + " | ".join(fields)
+    use_case = info.get("use_case")
+    if use_case:
+        card += f"\n  {use_case}"
+    return card
+
+
+def _menu_preset_level(data: dict[str, Any], family: str) -> tuple[str, list[list[str]], str | None]:
+    for provider, spec in data["providers"].items():
+        names = spec.get("families", {}).get(family)
+        if not names:
+            continue
+        presets = data.get("presets", {})
+        cards = "\n\n".join(
+            _menu_preset_card(name, presets.get(name, {})) for name in names
+        )
+        rows = [
+            [f"/model {name}" for name in names[i : i + 2]]
+            for i in range(0, len(names), 2)
+        ]
+        rows.append([f"/model_menu {provider}"])
+        return f"{family} — wybierz preset:\n\n{cards}", _menu_buttons(rows), provider
+    return "", [], None
+
+
+def _menu_measurements(data: dict[str, Any]) -> tuple[str, list[list[str]]]:
+    lines: list[str] = ["Ostatnie pomiary (minimalne zapytanie):"]
+    for name, info in data.get("presets", {}).items():
+        measured = info.get("time")
+        if measured:
+            lines.append(f"• {name}: {measured}")
+    lines.append("Odświeżenie pomiarów: napisz „odśwież pomiary modeli”. (pomiar to zadanie agenta, nie komenda)")
+    content = "\n".join(lines)
+    provider_rows = [[f"/model_menu {name}" for name in list(data["providers"])[i : i + 3]] for i in range(0, len(data["providers"]), 3)]
+    return content, _menu_buttons(provider_rows)
 
 
 async def cmd_model_menu(ctx: CommandContext) -> OutboundMessage:
-    """Open the interactive model picker menu (provider -> family -> preset)."""
+    """Open the interactive model picker menu (provider -> family -> preset).
+
+    Fully deterministic: renders buttons and preset cards from the optional
+    ``<workspace>/model-menu.json`` descriptor (falling back to configured
+    presets) without invoking the model.
+    """
     metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+    data = _load_model_menu_data(getattr(ctx.loop, "workspace", None))
+    if data is None:
+        data = _fallback_model_menu_data(ctx.loop)
+
+    arg = ctx.args.strip()
+    if not arg:
+        content, buttons = _menu_provider_level(data)
+    elif arg == "pomiary":
+        content, buttons = _menu_measurements(data)
+    elif arg in data["providers"]:
+        content, buttons = _menu_family_level(data, arg)
+    else:
+        content, buttons, owner = _menu_preset_level(data, arg)
+        if owner is None:
+            content = (
+                f"Nieznany poziom menu: {arg}. Dostępni dostawcy: "
+                f"{', '.join(data['providers'])}."
+            )
+            _, buttons = _menu_provider_level(data)
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
-        content=(
-            "Menu modeli — wybierz dostawcę. Dalej: rodzina → preset; "
-            "przy każdym presecie reasoning, wagi, kontekst, cena "
-            "i zmierzony czas odpowiedzi."
-        ),
-        buttons=MODEL_MENU_BUTTONS,
+        content=content,
+        buttons=buttons,
         metadata=metadata,
     )
 
@@ -1108,6 +1237,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
     router.exact("/model_menu", cmd_model_menu)
+    router.prefix("/model_menu ", cmd_model_menu)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
     router.exact("/goal", cmd_goal)
