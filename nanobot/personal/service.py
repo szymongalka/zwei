@@ -17,6 +17,7 @@ from nanobot.agent.hook import AgentHook, AgentRunHookContext, AgentTurnHookCont
 from nanobot.agent.tools.context import RequestContext
 from nanobot.personal.config import Account, PersonalConfig
 from nanobot.personal.connectors import dav_sync, mailbox_sync, send_mail, test_account
+from nanobot.personal.ics import refresh_calendar_projections
 from nanobot.personal.store import PersonalStore, readable_excerpt, searchable_text, utcnow
 from nanobot.personal.vector import VectorMemory
 from nanobot.runtime_context import RuntimeContextBlock, wrap_runtime_context_lines
@@ -128,6 +129,7 @@ class PersonalService:
             try:
                 count = mailbox_sync(self.store, account, self.config.sync_batch_size) if account.mail_enabled else 0
                 if account.calendar_enabled:
+                    refresh_calendar_projections(self.store, "calendar:" + account.id)
                     count += dav_sync(self.store, account, "calendar", self.config.sync_batch_size)
                 if account.contacts_enabled:
                     count += dav_sync(self.store, account, "contacts", self.config.sync_batch_size)

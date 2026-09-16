@@ -19,6 +19,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from nanobot.personal.config import Account
+from nanobot.personal.ics import event_projection, event_version
 from nanobot.personal.store import PersonalStore
 from nanobot.security.network import pin_resolved_url_dns, resolve_url_target
 
@@ -242,10 +243,16 @@ def dav_sync(store: PersonalStore, account: Account, kind: str, limit: int) -> i
             if store.checkpoint(key) == etag:
                 continue
             raw = client.request("GET", target)
-            text = raw.decode("utf-8", errors="replace")
+            content = raw.decode("utf-8", errors="replace")
+            # Calendar resources keep the raw iCalendar in the archive but index the
+            # event's own fields, and carry a version so an edited event replaces its
+            # predecessor in the projection instead of piling up beside it.
+            calendar = kind == "calendar"
             store.put(kind + ":" + account.id, target, {"href": target, "etag": etag,
-                      "content": text, "raw_b64": base64.b64encode(raw).decode(),
-                      "account_id": account.id}, text)
+                      "content": content, "raw_b64": base64.b64encode(raw).decode(),
+                      "account_id": account.id},
+                      event_projection(content) if calendar else content,
+                      version=event_version(content) if calendar else None)
             store.set_checkpoint(key, etag)
             count += 1
             if count >= limit:
