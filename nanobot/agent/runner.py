@@ -517,6 +517,8 @@ class AgentRunner:
                     workspace_violation_counts=workspace_violation_counts,
                     hook=hook,
                     context=context,
+                    model_messages=messages_for_model,
+                    compacted_tool_results=request_state.compacted_tool_results,
                 )
                 tool_events.extend(new_events)
                 tools_used.extend(

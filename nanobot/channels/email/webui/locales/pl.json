@@ -154,6 +154,11 @@
       },
       "maxAttachmentsPerEmail": {
         "label": "Maksymalna liczba załączników"
+      },
+      "trustedAuthservIds": {
+        "label": "Zaufane usługi uwierzytelniające",
+        "placeholder": "mx.google.com, rozdzielone przecinkami",
+        "help": "Dokładne wartości authserv-id dodawane przez usługę odbiorczą. Wymagane, gdy włączona jest weryfikacja SPF lub DKIM."
       }
     }
   }
