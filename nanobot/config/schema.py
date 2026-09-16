@@ -150,6 +150,13 @@ class AgentDefaults(Base):
         validation_alias=AliasChoices("toolHintMaxLength"),
         serialization_alias="toolHintMaxLength",
     )  # Max characters for tool hint display (e.g. "$ cd …/project && npm test")
+    progress_ping_seconds: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        validation_alias=AliasChoices("progressPingSeconds"),
+        serialization_alias="progressPingSeconds",
+    )  # Seconds of interactive silence before a turn pings that it is still working (0 = off)
     reasoning_effort: str | None = None  # low / medium / high / xhigh / max / adaptive / none — LLM thinking effort; None preserves the provider default
     timezone: str = "UTC"  # Effective IANA timezone, e.g. "Asia/Shanghai"
     timezone_mode: Literal["auto", "manual"] = "auto"
