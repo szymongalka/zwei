@@ -470,10 +470,9 @@ _TELEGRAM_COMMAND_ALIASES = {
     "/dream_restore": "/dream-restore",
     "/dream_prompt": "/dream-prompt",
     "/evaluator_prompt": "/evaluator-prompt",
-    "/model_menu": "/model-menu",
 }
 _TELEGRAM_DISPLAY_COMMAND_RE = re.compile(
-    r"(?<![\w/.-])/(?:dream-log|dream-restore|dream-prompt|evaluator-prompt|model-menu)(?![\w/.-])"
+    r"(?<![\w/.-])/(?:dream-log|dream-restore|dream-prompt|evaluator-prompt)(?![\w/.-])"
 )
 
 
@@ -540,6 +539,7 @@ class TelegramChannel(BaseChannel):
     # Canonical hyphenated commands stay on a separate handler (below).
     TELEGRAM_BUS_SLASH_COMMAND_RE = re.compile(
         r"^/(?:new|compact|stop|restart|status|dream|history|goal|trigger|pairing|model|skill"
+        r"|model_menu"
         r"|dream_log|dream_restore|dream_prompt|evaluator_prompt|evaluator-prompt)(?:@\w+)?(?:\s+.*)?$"
     )
 
@@ -700,7 +700,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(
             MessageHandler(
                 filters.Regex(
-                    r"^/(?:dream-log|dream-restore|dream-prompt|model-menu)(?:@\w+)?(?:\s+.*)?$"
+                    r"^/(?:dream-log|dream-restore|dream-prompt)(?:@\w+)?(?:\s+.*)?$"
                 ),
                 self._forward_command,
             )

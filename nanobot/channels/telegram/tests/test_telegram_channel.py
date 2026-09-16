@@ -2486,7 +2486,7 @@ async def test_forward_command_normalizes_telegram_safe_dream_aliases() -> None:
     await channel._forward_command(update, None)
 
     assert len(handled) == 1
-    assert handled[0]["content"] == "/model-menu"
+    assert handled[0]["content"] == "/model_menu"
 
 
 def test_telegram_bus_slash_command_regex_matches_agent_loop_commands() -> None:
@@ -2499,7 +2499,8 @@ def test_telegram_bus_slash_command_regex_matches_agent_loop_commands() -> None:
     assert pat.fullmatch("/trigger PR review")
     assert pat.fullmatch("/pairing list")
     assert pat.fullmatch("/model fast")
-    assert pat.fullmatch("/model-menu") is None
+    assert pat.fullmatch("/model_menu")
+    assert pat.fullmatch("/model_menu@nanobot_bot")
     assert pat.fullmatch("/skill")
     assert pat.fullmatch("/skill@nanobot_bot")
     assert pat.fullmatch("/new@nanobot_bot")
