@@ -2480,6 +2480,14 @@ async def test_forward_command_normalizes_telegram_safe_dream_aliases() -> None:
     assert len(handled) == 1
     assert handled[0]["content"] == "/dream-prompt init"
 
+    handled.clear()
+    update = _make_telegram_update(text="/model_menu@nanobot_test", reply_to_message=None)
+
+    await channel._forward_command(update, None)
+
+    assert len(handled) == 1
+    assert handled[0]["content"] == "/model-menu"
+
 
 def test_telegram_bus_slash_command_regex_matches_agent_loop_commands() -> None:
     """Bus-routed slash commands must match the Telegram handler regex (see builtin router)."""
@@ -2491,6 +2499,7 @@ def test_telegram_bus_slash_command_regex_matches_agent_loop_commands() -> None:
     assert pat.fullmatch("/trigger PR review")
     assert pat.fullmatch("/pairing list")
     assert pat.fullmatch("/model fast")
+    assert pat.fullmatch("/model-menu") is None
     assert pat.fullmatch("/skill")
     assert pat.fullmatch("/skill@nanobot_bot")
     assert pat.fullmatch("/new@nanobot_bot")

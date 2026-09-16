@@ -99,6 +99,12 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "activity",
     ),
     BuiltinCommandSpec(
+        "/model-menu",
+        "Open model menu",
+        "Show the interactive model picker (provider -> family -> preset).",
+        "brain",
+    ),
+    BuiltinCommandSpec(
         "/model",
         "Switch model preset",
         "Show or switch the active model preset.",
@@ -444,6 +450,28 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
         content="\n".join(lines),
+        metadata=metadata,
+    )
+
+
+MODEL_MENU_BUTTONS: list[list[str]] = [
+    ["Menu modeli: ChatGPT", "Menu modeli: OpenRouter"],
+    ["Menu modeli: Gemini", "Menu modeli: pomiary"],
+]
+
+
+async def cmd_model_menu(ctx: CommandContext) -> OutboundMessage:
+    """Open the interactive model picker menu (provider -> family -> preset)."""
+    metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=(
+            "Menu modeli — wybierz dostawcę. Dalej: rodzina → preset; "
+            "przy każdym presecie reasoning, wagi, kontekst, cena "
+            "i zmierzony czas odpowiedzi."
+        ),
+        buttons=MODEL_MENU_BUTTONS,
         metadata=metadata,
     )
 
@@ -1079,6 +1107,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
+    router.exact("/model-menu", cmd_model_menu)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
     router.exact("/goal", cmd_goal)

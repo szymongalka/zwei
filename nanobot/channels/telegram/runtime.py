@@ -470,9 +470,10 @@ _TELEGRAM_COMMAND_ALIASES = {
     "/dream_restore": "/dream-restore",
     "/dream_prompt": "/dream-prompt",
     "/evaluator_prompt": "/evaluator-prompt",
+    "/model_menu": "/model-menu",
 }
 _TELEGRAM_DISPLAY_COMMAND_RE = re.compile(
-    r"(?<![\w/.-])/(?:dream-log|dream-restore|dream-prompt|evaluator-prompt)(?![\w/.-])"
+    r"(?<![\w/.-])/(?:dream-log|dream-restore|dream-prompt|evaluator-prompt|model-menu)(?![\w/.-])"
 )
 
 
@@ -513,6 +514,7 @@ class TelegramChannel(BaseChannel):
 
     # Commands registered with Telegram's command menu
     BOT_COMMANDS: list[BotCommand] = [
+        BotCommand("model_menu", "Open the model picker menu"),
         BotCommand("start", "Start the bot"),
         BotCommand("new", "Start a new conversation"),
         BotCommand("compact", "Compact this chat's context"),
@@ -698,7 +700,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(
             MessageHandler(
                 filters.Regex(
-                    r"^/(?:dream-log|dream-restore|dream-prompt)(?:@\w+)?(?:\s+.*)?$"
+                    r"^/(?:dream-log|dream-restore|dream-prompt|model-menu)(?:@\w+)?(?:\s+.*)?$"
                 ),
                 self._forward_command,
             )
