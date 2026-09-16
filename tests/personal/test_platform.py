@@ -4,6 +4,7 @@ import base64
 import gzip
 import json
 import sqlite3
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +13,7 @@ from pydantic import ValidationError
 
 from nanobot.agent.hook import AgentRunHookContext, AgentTurnHookContext
 from nanobot.agent.memory import MemoryArchiver, MemoryStore
+from nanobot.agent.tools.context import RequestContext
 from nanobot.personal import connectors, evolution
 from nanobot.personal.config import Account, FolderRule, PersonalConfig
 from nanobot.personal.inbox import list_inbox, project_mail
@@ -331,3 +333,67 @@ async def test_nonempty_provider_error_is_not_a_successful_development_cycle(tmp
     await development_cycle(service, agent)
     assert service.store.checkpoint("development_state") == "error:RuntimeError"
     assert service.store.status()["evolution"][0]["status"] == "development_failed"
+
+
+def test_readable_excerpt_condenses_markup_noise_without_touching_the_archive(store):
+    from nanobot.personal.store import readable_excerpt
+    junk = "<p>\r\n\t  &nbsp;   &amp; </p>\r\n  <b>witaj</b>  \u00a0  ponownie \r\n"
+    assert readable_excerpt(junk, 600) == "<p> & </p> <b>witaj</b> ponownie"
+    assert readable_excerpt("x" * 2000, 10) == "x" * 10
+    assert readable_excerpt("\r\n\t &nbsp; \r\n", 600) == ""
+    stored = store.put("mail:one", "INBOX:1:9", {"body": junk})
+    assert store.get(stored)["payload"]["body"] == junk
+
+
+def test_search_excerpts_are_condensed_projections(store, tmp_path):
+    from nanobot.personal.service import EXCERPT_LIMIT
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    body = "raport " * 400
+    service.store.put("mail:one", "INBOX:1:1", {"headers": {"Subject": "Raport"}, "body": body})
+    results = service.search("raport", 4)
+    assert results and len(results[0]["excerpt"]) <= EXCERPT_LIMIT
+    assert "  " not in results[0]["excerpt"]
+
+
+async def test_runtime_context_drops_markup_noise_and_bounds_output(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    service.store.put("mail:one", "INBOX:1:2", {
+        "headers": {"Subject": "Newsletter"}, "body": "\r\n\t &nbsp;  &nbsp; \r\n   \t"})
+    service.store.put("mail:one", "INBOX:1:3", {
+        "headers": {"Subject": "Raport"}, "body": "Realna treść raportu " + "słowo " * 200})
+    request = RequestContext(channel="telegram", chat_id="1",
+                             original_user_text="newsletter raport podsumowanie")
+    block = await service.runtime_context(request)
+    assert block is not None
+    assert "Realna treść" in block.content
+    assert "&nbsp;" not in block.content
+    # A record whose whole projection condenses below the usable minimum is dropped.
+    service.store.put("mail:one", "INBOX:1:4", {
+        "headers": {"Subject": "x"}, "body": "\r\n\t &nbsp; \r\n"})
+    empty_match = RequestContext(channel="telegram", chat_id="1",
+                                 original_user_text="x podsumowanie tygodnia")
+    assert await service.runtime_context(empty_match) is None
+
+
+async def test_runtime_context_never_gates_a_turn_on_slow_or_broken_retrieval(tmp_path, monkeypatch):
+    service = PersonalService(
+        PersonalConfig(data_dir=str(tmp_path / "data"), retrieval_timeout_seconds=0.5), tmp_path)
+    request = RequestContext(channel="telegram", chat_id="1",
+                             original_user_text="jakoś to będzie dłuższe osiem znaków")
+    def slow(*args, **kwargs):
+        time.sleep(2)
+        return []
+    monkeypatch.setattr(service, "search", slow)
+    started = time.perf_counter()
+    assert await service.runtime_context(request) is None
+    assert time.perf_counter() - started < 1.5
+    def broken(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+    monkeypatch.setattr(service, "search", broken)
+    assert await service.runtime_context(request) is None
+
+
+def test_retrieval_timeout_is_configurable_and_bounded():
+    assert PersonalConfig(data_dir="x").retrieval_timeout_seconds == 2.0
+    with pytest.raises(ValidationError):
+        PersonalConfig(data_dir="x", retrieval_timeout_seconds=0.1)
