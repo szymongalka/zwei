@@ -379,3 +379,22 @@ async def test_message_tool_cli_context_may_target_other_ws_chat(tmp_path) -> No
     assert result.startswith("Message sent")
     assert sent[0].channel == "websocket"
     assert sent[0].chat_id == target
+
+
+@pytest.mark.asyncio
+async def test_message_tool_target_flag_reaches_metadata() -> None:
+    sent: list[OutboundMessage] = []
+
+    async def _send(msg: OutboundMessage) -> None:
+        sent.append(msg)
+
+    tool = MessageTool(send_callback=_send)
+
+    await tool.execute(content="n", channel="telegram", chat_id="1", target="notify")
+    assert sent[-1].metadata.get("notify_target") == "notify"
+
+    await tool.execute(content="n", channel="telegram", chat_id="1", target="main")
+    assert sent[-1].metadata.get("notify_target") == "main"
+
+    result = await tool.execute(content="n", channel="telegram", chat_id="1", target="bogus")
+    assert result == "Error: target must be 'main' or 'notify'"

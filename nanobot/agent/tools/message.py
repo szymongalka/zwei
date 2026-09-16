@@ -62,6 +62,11 @@ def capture_message_deliveries() -> Generator[set[tuple[str, str]], None, None]:
             ArraySchema(StringSchema("Button label")),
             description="Optional: inline keyboard buttons as list of rows, each row is list of button labels.",
         ),
+        target=StringSchema(
+            "Optional: 'notify' routes this send through the notification bot when one is "
+            "configured; 'main' forces the conversation bot. Automation notifications "
+            "(no buttons) default to the notification bot."
+        ),
         required=["content"],
     )
 )
@@ -156,6 +161,7 @@ class MessageTool(Tool):
         message_id: str | None = None,
         media: list[str] | None = None,
         buttons: Any = None,
+        target: str | None = None,
         **kwargs: Any,
     ) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         from nanobot.utils.helpers import strip_think
@@ -229,6 +235,10 @@ class MessageTool(Tool):
                 return ToolResult.error(f"Error: media path is not allowed: {str(e)}")
 
         metadata = dict(default_metadata) if same_target else {}
+        if target not in (None, "", "main", "notify"):
+            return ToolResult.error("Error: target must be 'main' or 'notify'")
+        if target in ("main", "notify"):
+            metadata["notify_target"] = target
         if message_id:
             metadata["message_id"] = message_id
         if media:
