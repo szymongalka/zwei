@@ -154,6 +154,13 @@ python -m pip install nanobot-ai
 
 If pip reports `externally-managed-environment` on macOS or Linux, use the one-command installer, `uv tool install nanobot-ai`, `pipx install nanobot-ai`, or install inside a virtual environment.
 
+Platform wheels include both the WebUI and the native terminal UI: macOS 13+ (Apple Silicon
+and Intel), glibc 2.17+ Linux (ARM64 and x64), and Windows x64. The x64 runtime requires SSE4.2.
+Pip selects the matching wheel;
+opening the TUI does not need a separate GitHub download or Bun installation. On other platforms
+or when building from the source distribution, use `nanobot --classic` or the WebUI; native TUI
+availability depends on the platform runtime.
+
 **Install from source**
 
 Clone the repository and install it in editable mode. Bun is required because the source
@@ -288,7 +295,7 @@ The screenshots below use example conversations, illustrative token counts, and 
 
 <p align="center">
   <a href="./images/nanobot_webui-source.png">
-    <img src="./images/nanobot_webui.png" alt="nanobot WebUI preview with model, project, Apps, Skills, and Automations controls" width="900">
+    <img src="./images/nanobot_webui.png" alt="nanobot WebUI new-topic screen with the hero composer, workspace access, project, and model controls" width="900">
   </a>
 </p>
 
@@ -332,10 +339,10 @@ Use Apps to connect MCP servers, enable Agent Plugins, and manage local CLI App 
 
 ### Let recurring work run on a schedule
 
-Ask for an automation from the topic that should receive its results. Review the message, schedule, linked chat, and run history in Automations; pause or edit it as your needs change. Local triggers let a script start a saved task on demand.
+Ask for an automation from the topic that should receive its results. Use **Tasks** to review and manage schedules, or **Calendar** to scan completed and upcoming runs by date. Local triggers let a script start a saved task on demand.
 
 <p align="center">
-  <img src="./images/nanobot-automations.png" alt="The Automations view with example recurring tasks, a selected daily brief, its schedule, linked chat, and management controls" width="900">
+  <img src="./images/nanobot-automations.png" alt="The Automations calendar with completed and upcoming recurring tasks arranged by date" width="900">
 </p>
 
 Keep the gateway running for scheduled delivery. [Explore Automations →](./docs/automations.md)
