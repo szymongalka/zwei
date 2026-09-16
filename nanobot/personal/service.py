@@ -277,7 +277,27 @@ class PersonalService:
         from nanobot.personal.evolution import evolve, rollback
         return rollback(self.store) if request.action == "rollback" else evolve(self)
 
+    def warm_memory(self) -> bool:
+        """Load the embedding model and remote schema before the first turn pays for them.
+
+        Lazy loading costs a cold start on whichever retrieval happens first; moving it
+        to service startup keeps it out of a user-visible turn. Failure is reported to
+        the caller and never gates retrieval or archival.
+        """
+        if self.vector is None:
+            return False
+        self.vector.initialize()
+        self.vector.embed(["warmup"])
+        return True
+
+    async def _warm_memory_once(self) -> None:
+        try:
+            await asyncio.to_thread(self.warm_memory)
+        except Exception as exc:
+            logger.warning("Personal remote memory warmup skipped ({})", type(exc).__name__)
+
     async def run(self) -> None:
+        await self._warm_memory_once()
         while True:
             try:
                 await asyncio.to_thread(self.sync_workspace_memory)
