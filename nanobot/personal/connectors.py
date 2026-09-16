@@ -108,9 +108,12 @@ def mailbox_sync(store: PersonalStore, account: Account, batch_size: int) -> int
             key = f"imap:{account.id}:{folder}:{generation}"
             cursor = int(store.checkpoint(key, "0"))
             status, found = client.uid("SEARCH", "UID", f"{cursor + 1}:*")
-            if status != "OK" or not found:
+            if status != "OK":
                 raise ValueError("Mailbox search failed")
-            uids = [int(uid) for uid in bytes(found[0]).split() if int(uid) > cursor]
+            # A range past the newest UID matches nothing, and some servers then
+            # omit the untagged SEARCH line, which imaplib reports as [None].
+            listing = found[0] if found and isinstance(found[0], bytes) else b""
+            uids = [int(uid) for uid in listing.split() if int(uid) > cursor]
             for uid in sorted(uids)[:batch_size]:
                 status, sizes = client.uid("FETCH", str(uid), "(RFC822.SIZE)")
                 size_text = b" ".join(item for item in sizes or [] if isinstance(item, bytes))

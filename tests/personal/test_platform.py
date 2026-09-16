@@ -173,6 +173,23 @@ def test_mail_failure_retains_uid_cursor(store, monkeypatch):
     assert store.status()["documents"] == 0
 
 
+def test_missing_search_response_means_no_new_mail(store, monkeypatch):
+    # iCloud omits the untagged SEARCH line when the range past the cursor
+    # matches nothing; imaplib reports [None] and the sync must stay idle.
+    a = account()
+    store.save_account(a)
+    client = fake_imap(b"From: sender@example.org\r\nSubject: x\r\n\r\nbody\r\n")
+    def uid(command, *args):
+        if command == "SEARCH":
+            return "OK", [None]
+        raise AssertionError("FETCH must not run without search results")
+    client.uid.side_effect = uid
+    monkeypatch.setattr(connectors, "_imap", lambda _: client)
+    assert connectors.mailbox_sync(store, a, 50) == 0
+    assert store.checkpoint("imap:one:INBOX:42", "0") == "0"
+    assert store.status()["documents"] == 0
+
+
 def test_folder_move_requires_archive_and_explicit_rule_without_parent_group(store):
     rule = FolderRule(id="meeting", label="Meeting", folder="Spotkania", contains=["meeting"])
     a = account(organize_folders=True, folder_rules=[rule])
