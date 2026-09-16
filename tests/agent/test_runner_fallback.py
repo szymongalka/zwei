@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1804,3 +1805,112 @@ class TestGenerationForwarded:
         )
         assert fb.generation.temperature == 0.5
         assert fb.generation.max_tokens == 1024
+        assert fb.generation.temperature == 0.5
+        assert fb.generation.max_tokens == 1024
+
+
+class TestFallbackModelBreaker:
+    @pytest.mark.asyncio
+    async def test_skips_fallback_after_three_consecutive_failures(self) -> None:
+        primary = _FakeProvider("primary", _error_response())
+        dead = _FakeProvider("dead-fallback", _error_response())
+        healthy = _FakeProvider("healthy-fallback", _make_response("healthy ok"))
+
+        def factory(preset: Any) -> _FakeProvider:
+            return dead if preset.model == "dead-a" else healthy
+
+        fb = FallbackProvider(
+            primary=primary,
+            fallback_presets=[_fallback("dead-a"), _fallback("healthy-b")],
+            provider_factory=factory,
+        )
+
+        # Three walks: dead-a fails each time, healthy-b answers.
+        for _ in range(3):
+            result = await fb.chat(messages=[{"role": "user", "content": "hi"}])
+            assert result.content == "healthy ok"
+        assert len(dead.chat_calls) == 3
+
+        # Fourth walk: dead-a is circuit-broken and is not called again.
+        dead.chat_calls.clear()
+        result = await fb.chat(messages=[{"role": "user", "content": "hi"}])
+        assert result.content == "healthy ok"
+        assert len(dead.chat_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_fallback_success_resets_failure_count(self) -> None:
+        primary = _FakeProvider("primary", _error_response())
+        flaky = _FakeProvider(
+            "flaky",
+            responses=[
+                _error_response(),
+                _error_response(),
+                _make_response("flaky ok"),
+                _error_response(),
+                _error_response(),
+                _make_response("flaky ok again"),
+            ],
+        )
+        fb = FallbackProvider(
+            primary=primary,
+            fallback_presets=[_fallback("flaky-a")],
+            provider_factory=MagicMock(return_value=flaky),
+        )
+
+        # f1, f2, then a success resets the consecutive count.
+        results = [
+            await fb.chat(messages=[{"role": "user", "content": "hi"}])
+            for _ in range(3)
+        ]
+        assert results[-1].content == "flaky ok"
+
+        # Two more failures stay below the threshold after the reset, so the
+        # third call after the success is still attempted and succeeds.
+        followups = [
+            await fb.chat(messages=[{"role": "user", "content": "hi"}])
+            for _ in range(3)
+        ]
+        assert followups[-1].content == "flaky ok again"
+        assert len(flaky.chat_calls) == 6
+
+    @pytest.mark.asyncio
+    async def test_primary_quota_cooldown_outlasts_transient_cooldown(self) -> None:
+        primary = _FakeProvider(
+            "primary",
+            _make_response(
+                "quota",
+                finish_reason="error",
+                error_kind="rate_limit",
+                error_status_code=429,
+            ),
+        )
+        fallback = _FakeProvider("fallback", _make_response("fallback ok"))
+        fb = FallbackProvider(
+            primary=primary,
+            fallback_presets=[_fallback("fallback-a")],
+            provider_factory=MagicMock(return_value=fallback),
+        )
+
+        for _ in range(3):
+            await fb.chat(messages=[{"role": "user", "content": "hi"}])
+        assert len(primary.chat_calls) == 3
+
+        # 61s later a transient breaker would be half-open; the quota breaker
+        # must still be open.
+        future = time.monotonic() + 61
+        with patch(
+            "nanobot.providers.fallback_provider.time.monotonic",
+            return_value=future,
+        ):
+            primary.chat_calls.clear()
+            await fb.chat(messages=[{"role": "user", "content": "hi"}])
+            assert len(primary.chat_calls) == 0
+
+        # After the quota cooldown the primary is probed again.
+        far_future = future + 600
+        with patch(
+            "nanobot.providers.fallback_provider.time.monotonic",
+            return_value=far_future,
+        ):
+            await fb.chat(messages=[{"role": "user", "content": "hi"}])
+            assert len(primary.chat_calls) == 1
