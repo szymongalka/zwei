@@ -515,8 +515,9 @@ def _run_gateway(
     # workspace memory files, so they are registered even without a personal account.
     from nanobot.agent import memory_triggers
 
-    if memory_triggers.enabled():
-        trigger_workspace = agent.context.memory.workspace
+    memory_store = getattr(getattr(agent, "context", None), "memory", None)
+    trigger_workspace = getattr(memory_store, "workspace", None)
+    if memory_triggers.enabled() and trigger_workspace is not None:
 
         async def _memory_trigger_context(request: Any) -> Any:
             return await asyncio.to_thread(
