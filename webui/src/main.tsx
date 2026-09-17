@@ -2,6 +2,10 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import "./globals.css";
+// Loaded after globals.css on purpose: the Liquid Glass rules must win over
+// Tailwind utilities (and over their `dark:` variants, which share the same
+// specificity but are emitted earlier).
+import "./styles/liquid-glass.css";
 import { initializeI18n } from "./i18n";
 import { initializeLoopbackRuntimeHost } from "./lib/runtime";
 

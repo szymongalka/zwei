@@ -80,6 +80,7 @@ These pages explain implementation and extension points. You do not need them to
 |---|---|
 | Maintain the Zwei fork and integrate upstream | [Fork maintenance](./fork-maintenance.md) |
 | Choose tabs or panels for a WebUI add-on | [WebUI add-on policy](./webui-addons.md) |
+| Change or add a WebUI appearance palette | [WebUI appearance themes](./webui-themes.md) |
 | Understand source ownership and runtime flow | [Architecture](./architecture.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Add a channel package | [Channel Package Guide](./channel-package-guide.md) |

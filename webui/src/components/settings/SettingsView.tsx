@@ -1,5 +1,6 @@
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import type { SettingsExitGuard, SettingsSectionKey } from "@/components/settings/contracts";
+import type { GlassClarity, ThemeStyle } from "@/hooks/useTheme";
 import { useSettingsController } from "@/components/settings/useSettingsController";
 import type { SendAttachment, SendOptions } from "@/hooks/useNanobotStream";
 import type { SettingsPayload, SkillSummary } from "@/lib/types";
@@ -9,6 +10,10 @@ export type { SettingsSectionKey } from "@/components/settings/contracts";
 interface SettingsViewProps {
   registerExitGuard?: (guard: SettingsExitGuard | null) => void;
   theme: "light" | "dark";
+  themeStyle?: ThemeStyle;
+  glassClarity?: GlassClarity;
+  onThemeStyleChange?: (style: ThemeStyle) => void;
+  onGlassClarityChange?: (clarity: GlassClarity) => void;
   initialSection?: SettingsSectionKey;
   initialSettings?: SettingsPayload | null;
   showSidebar?: boolean;
@@ -36,6 +41,10 @@ interface SettingsViewProps {
 export function SettingsView({
   registerExitGuard,
   theme,
+  themeStyle = "classic",
+  glassClarity = "clear",
+  onThemeStyleChange,
+  onGlassClarityChange,
   initialSection = "overview",
   initialSettings = null,
   showSidebar = true,
@@ -69,6 +78,10 @@ export function SettingsView({
       registerExitGuard={registerExitGuard}
       controller={controller}
       theme={theme}
+      themeStyle={themeStyle}
+      glassClarity={glassClarity}
+      onThemeStyleChange={onThemeStyleChange}
+      onGlassClarityChange={onGlassClarityChange}
       showSidebar={showSidebar}
       mainNavigationExpanded={mainNavigationExpanded}
       onToggleTheme={onToggleTheme}

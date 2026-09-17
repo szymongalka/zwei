@@ -1106,7 +1106,7 @@ function Shell({
 }) {
   const { t, i18n } = useTranslation();
   const { client, getToken } = useClient();
-  const { theme, toggle } = useTheme();
+  const { theme, toggle, style: themeStyle, clarity: glassClarity, setStyle, setClarity } = useTheme();
   const {
     sessions,
     loading,
@@ -2950,6 +2950,10 @@ function Shell({
                   <SettingsView
                     registerExitGuard={registerSettingsExitGuard}
                     theme={theme}
+                    themeStyle={themeStyle}
+                    glassClarity={glassClarity}
+                    onThemeStyleChange={setStyle}
+                    onGlassClarityChange={setClarity}
                     initialSection={settingsInitialSection}
                     initialSettings={settingsSnapshot}
                     showSidebar={view === "settings"}

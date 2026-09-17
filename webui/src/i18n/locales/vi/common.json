@@ -216,6 +216,8 @@
     },
     "rows": {
       "theme": "Chủ đề",
+      "themeStyle": "Kiểu hiển thị",
+      "glassClarity": "Độ trong của kính",
       "language": "Ngôn ngữ",
       "provider": "Nhà cung cấp",
       "model": "Mô hình",
@@ -308,6 +310,10 @@
     "values": {
       "light": "Sáng",
       "dark": "Tối",
+      "classic": "Cổ điển",
+      "liquidGlass": "Liquid Glass",
+      "glassClear": "Trong suốt",
+      "glassTinted": "Pha màu",
       "notAvailable": "Không khả dụng",
       "enabled": "Đã bật",
       "disabled": "Đã tắt",

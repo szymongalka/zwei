@@ -1,0 +1,328 @@
+/*
+ * Liquid Glass — Apple's material language, applied to the Zwei WebUI.
+ *
+ * The theme is a second, opt-in appearance next to the default shadcn
+ * "classic" palette. It is namespaced by the `theme-liquid-glass` class on
+ * <html> and composes with the existing `dark` class, so it ships a clear
+ * light and a clear dark variant from one set of rules. Selecting "Classic"
+ * in Settings -> Appearance restores the previous look; nothing here changes
+ * a default.
+ *
+ * What the material is built from (see docs/webui-themes.md for the sources):
+ * - Translucent fills keep content visible through chrome and controls, which
+ *   is what establishes hierarchy between content and controls in Apple's HIG
+ *   "Materials" guidance.
+ * - The browser has no native refraction, so the material is approximated with
+ *   `backdrop-filter` blur plus saturation, a 1px specular top edge (the
+ *   highlight that makes a panel read as glass rather than tinted film) and a
+ *   soft cast shadow.
+ * - Apple increased opacity in navigation chrome and system overlays after the
+ *   iOS 26 betas because text legibility suffered. Every layer here carries
+ *   more opacity the more text it has to support: canvas < chrome < panel <
+ *   overlay. Menus and dialogs are the most opaque.
+ * - At WWDC 2026 Apple reduced the default transparency again and added a
+ *   user-facing control that moves the material between clearer and more
+ *   heavily tinted glass. That control is `data-glass-clarity` ("clear" |
+ *   "tinted"); "clear" is the default and mirrors the request for a
+ *   transparent appearance.
+ * - The wallpaper is the content the material refracts. There is no wallpaper
+ *   picker yet: it is part of the theme.
+ *
+ * Accessibility and degradation:
+ * - `prefers-reduced-transparency: reduce` collapses the material to a
+ *   near-solid, readable surface and flattens the wallpaper.
+ * - Browsers without `backdrop-filter` get the same near-solid surfaces.
+ * - `prefers-contrast: more` strengthens strokes and removes the remaining
+ *   translucency so contrast stays predictable.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Tokens: light ("clear")
+ * ------------------------------------------------------------------ */
+.theme-liquid-glass {
+  color-scheme: light;
+
+  /* Retuned palette. Tokens stay opaque HSL triplets because the whole app
+     composes them as `hsl(var(--token) / <alpha>)`; translucency is applied
+     per surface below. */
+  --background: 220 30% 99%;
+  --foreground: 222 20% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 20% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 20% 12%;
+  --primary: 212 100% 42%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 30% 97.5%;
+  --secondary-foreground: 222 20% 14%;
+  --muted: 220 25% 96%;
+  --muted-foreground: 220 12% 38%;
+  --accent: 220 30% 95.5%;
+  --accent-foreground: 222 20% 14%;
+  --border: 220 18% 88%;
+  --input: 220 18% 90%;
+  --ring: 212 100% 45%;
+  --sidebar: 220 32% 98.5%;
+  --sidebar-foreground: 222 20% 12%;
+  --sidebar-content: 222 12% 27%;
+  --sidebar-muted-foreground: 220 10% 42%;
+  --sidebar-selected: 220 34% 91%;
+  --sidebar-accent: 220 30% 94%;
+  --sidebar-accent-foreground: 222 20% 12%;
+  --sidebar-border: 220 18% 88%;
+  --settings-surface: 220 30% 98.5%;
+
+  /* Material fills. "Clear" keeps enough veil to read text over the wallpaper
+     without hiding it; the more text a layer carries, the less it lets through. */
+  --glass-fill-canvas: rgb(255 255 255 / 0.22);
+  --glass-fill-chrome: rgb(255 255 255 / 0.42);
+  --glass-fill-panel: rgb(255 255 255 / 0.58);
+  --glass-fill-overlay: rgb(253 254 255 / 0.82);
+  --glass-fill-solid: rgb(249 250 252 / 1);
+
+  /* Edges: inner specular highlight, hairline stroke, cast shadow. */
+  --glass-specular: rgb(255 255 255 / 0.85);
+  --glass-stroke: rgb(255 255 255 / 0.72);
+  --glass-stroke-outer: rgb(15 23 42 / 0.1);
+  --glass-shadow-soft: 0 12px 32px -24px rgb(15 23 42 / 0.45);
+  --glass-shadow: 0 30px 70px -40px rgb(15 23 42 / 0.5);
+
+  /* Optics. */
+  --glass-blur: 24px;
+  --glass-saturate: 180%;
+
+  /* Wallpaper behind the glass. */
+  --glass-wallpaper-base: #eef1f7;
+  --glass-wallpaper:
+    radial-gradient(62rem 46rem at 8% -14%, rgb(92 148 255 / 0.72), transparent 66%),
+    radial-gradient(56rem 42rem at 94% -8%, rgb(166 118 255 / 0.58), transparent 64%),
+    radial-gradient(58rem 44rem at 82% 108%, rgb(74 212 198 / 0.52), transparent 66%),
+    radial-gradient(50rem 38rem at 10% 104%, rgb(255 172 104 / 0.46), transparent 64%),
+    radial-gradient(84rem 58rem at 52% 36%, rgb(196 210 255 / 0.5), transparent 74%);
+}
+
+/* ------------------------------------------------------------------ *
+ * Tokens: dark ("clear")
+ * ------------------------------------------------------------------ */
+.theme-liquid-glass.dark {
+  color-scheme: dark;
+
+  --background: 222 18% 11%;
+  --foreground: 220 20% 97%;
+  --card: 222 16% 15%;
+  --card-foreground: 220 20% 97%;
+  --popover: 222 16% 15%;
+  --popover-foreground: 220 20% 97%;
+  --primary: 212 100% 62%;
+  --primary-foreground: 222 40% 8%;
+  --secondary: 222 16% 18%;
+  --secondary-foreground: 220 20% 97%;
+  --muted: 222 16% 18%;
+  --muted-foreground: 220 12% 72%;
+  --accent: 222 16% 21%;
+  --accent-foreground: 220 20% 97%;
+  --border: 220 12% 30%;
+  --input: 220 12% 32%;
+  --ring: 212 100% 66%;
+  --sidebar: 222 18% 13%;
+  --sidebar-foreground: 220 20% 97%;
+  --sidebar-content: 220 14% 82%;
+  --sidebar-muted-foreground: 220 12% 68%;
+  --sidebar-selected: 220 12% 26%;
+  --sidebar-accent: 222 16% 19%;
+  --sidebar-accent-foreground: 220 20% 97%;
+  --sidebar-border: 220 12% 30%;
+  --settings-surface: 222 16% 15%;
+
+  --glass-fill-canvas: rgb(20 22 30 / 0.26);
+  --glass-fill-chrome: rgb(24 27 36 / 0.44);
+  --glass-fill-panel: rgb(28 31 41 / 0.6);
+  --glass-fill-overlay: rgb(30 33 44 / 0.85);
+  --glass-fill-solid: rgb(16 18 24 / 1);
+
+  --glass-specular: rgb(255 255 255 / 0.14);
+  --glass-stroke: rgb(255 255 255 / 0.1);
+  --glass-stroke-outer: rgb(0 0 0 / 0.5);
+  --glass-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 0.6);
+  --glass-shadow: 0 34px 74px -42px rgb(0 0 0 / 0.7);
+
+  --glass-wallpaper-base: #080a0f;
+  --glass-wallpaper:
+    radial-gradient(62rem 46rem at 6% -16%, rgb(48 108 240 / 0.62), transparent 66%),
+    radial-gradient(56rem 42rem at 96% -10%, rgb(140 82 244 / 0.56), transparent 64%),
+    radial-gradient(58rem 44rem at 80% 112%, rgb(24 176 176 / 0.48), transparent 66%),
+    radial-gradient(50rem 38rem at 8% 102%, rgb(196 104 40 / 0.38), transparent 64%),
+    radial-gradient(84rem 58rem at 52% 32%, rgb(44 60 116 / 0.5), transparent 74%);
+}
+
+/* ------------------------------------------------------------------ *
+ * Tokens: tinted glass (the 2026 clarity control)
+ * ------------------------------------------------------------------ */
+.theme-liquid-glass[data-glass-clarity="tinted"] {
+  --glass-fill-canvas: rgb(238 242 249 / 0.5);
+  --glass-fill-chrome: rgb(243 246 252 / 0.7);
+  --glass-fill-panel: rgb(246 248 253 / 0.86);
+  --glass-fill-overlay: rgb(248 250 254 / 0.94);
+}
+
+.theme-liquid-glass.dark[data-glass-clarity="tinted"] {
+  --glass-fill-canvas: rgb(16 18 26 / 0.6);
+  --glass-fill-chrome: rgb(20 23 31 / 0.76);
+  --glass-fill-panel: rgb(24 27 36 / 0.9);
+  --glass-fill-overlay: rgb(26 29 38 / 0.95);
+}
+
+/* ------------------------------------------------------------------ *
+ * Wallpaper
+ * ------------------------------------------------------------------ */
+.theme-liquid-glass {
+  background-color: var(--glass-wallpaper-base);
+  background-image: var(--glass-wallpaper);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* The app paints its canvas on <body> (`.bg-background`), so the canvas veil
+   below is what sits between the wallpaper and the content. Keep the body
+   background transparent as a fallback for render paths that drop the class;
+   the veil wins on specificity wherever the class is present. */
+.theme-liquid-glass body {
+  background-color: transparent;
+}
+
+/* ------------------------------------------------------------------ *
+ * Canvas: content floats over the wallpaper behind a light veil
+ * ------------------------------------------------------------------ */
+.theme-liquid-glass .bg-background,
+html.theme-liquid-glass body.bg-background,
+html.theme-liquid-glass.dark body.bg-background {
+  background-color: var(--glass-fill-canvas);
+}
+
+/* ------------------------------------------------------------------ *
+ * Chrome and floating surfaces: the material itself
+ * ------------------------------------------------------------------ */
+.theme-liquid-glass :is(
+  .glass-surface,
+  .bg-sidebar,
+  .bg-card,
+  .bg-popover,
+  .bg-settings-surface,
+  .thread-composer-surface,
+  [role="dialog"],
+  [role="alertdialog"],
+  [role="menu"],
+  [role="listbox"],
+  [role="tooltip"]
+) {
+  background-color: var(--glass-fill-panel);
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
+  backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
+  border-color: var(--glass-stroke);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 0 0 1px var(--glass-stroke),
+    var(--glass-shadow-soft);
+}
+
+/* Menus, popovers and sheets carry text, so they stay the most opaque layer. */
+.theme-liquid-glass :is(
+  .bg-popover,
+  [role="dialog"],
+  [role="alertdialog"],
+  [role="menu"],
+  [role="listbox"],
+  [role="tooltip"]
+) {
+  background-color: var(--glass-fill-overlay);
+}
+
+/* A surface inside another glass surface must not stack a second blur. */
+.theme-liquid-glass :is(.glass-surface, .bg-sidebar, [role="dialog"]) :is(.glass-surface, .bg-sidebar, .bg-card) {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* The composer keeps a slightly stronger edge because it is the primary
+   control, and it should read as lifted while focused. */
+.theme-liquid-glass .thread-composer-surface {
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 0 0 1px var(--glass-stroke),
+    var(--glass-shadow);
+}
+
+.theme-liquid-glass .thread-composer-surface:focus-within {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.95),
+    inset 0 0 0 1px var(--glass-stroke),
+    var(--glass-shadow);
+}
+
+/* The composer dock used to be solid so messages could not show through it.
+   In the glass theme it fades into the canvas instead of cutting it off. */
+.theme-liquid-glass .thread-composer-dock {
+  background: linear-gradient(to bottom, transparent, var(--glass-fill-canvas));
+}
+
+/* ------------------------------------------------------------------ *
+ * Legibility guards
+ * ------------------------------------------------------------------ */
+
+/* Glass is blurry: never let it carry the only copy of a critical outline. */
+.theme-liquid-glass .markdown-content pre,
+.theme-liquid-glass .markdown-content code {
+  background-color: rgb(255 255 255 / 0.62);
+}
+
+.theme-liquid-glass.dark .markdown-content pre,
+.theme-liquid-glass.dark .markdown-content code {
+  background-color: rgb(12 14 20 / 0.6);
+}
+
+/* ------------------------------------------------------------------ *
+ * Reduced transparency, missing backdrop-filter, higher contrast
+ * ------------------------------------------------------------------ */
+@media (prefers-reduced-transparency: reduce) {
+  .theme-liquid-glass {
+    --glass-fill-canvas: var(--glass-fill-solid);
+    --glass-fill-chrome: var(--glass-fill-solid);
+    --glass-fill-panel: var(--glass-fill-solid);
+    --glass-fill-overlay: var(--glass-fill-solid);
+    --glass-specular: transparent;
+    --glass-stroke: var(--glass-stroke-outer);
+    --glass-shadow-soft: none;
+    --glass-shadow: none;
+    --glass-blur: 0px;
+
+    background-image: none;
+  }
+
+  .theme-liquid-glass .thread-composer-dock {
+    background: var(--glass-fill-solid);
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .theme-liquid-glass {
+    --glass-fill-canvas: var(--glass-fill-solid);
+    --glass-fill-chrome: var(--glass-fill-solid);
+    --glass-fill-panel: var(--glass-fill-solid);
+    --glass-fill-overlay: var(--glass-fill-solid);
+    --glass-blur: 0px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .theme-liquid-glass {
+    --glass-fill-canvas: var(--glass-fill-solid);
+    --glass-fill-chrome: var(--glass-fill-solid);
+    --glass-fill-panel: var(--glass-fill-solid);
+    --glass-fill-overlay: var(--glass-fill-solid);
+    --glass-stroke: var(--glass-stroke-outer);
+    --glass-specular: transparent;
+    --glass-blur: 0px;
+  }
+}

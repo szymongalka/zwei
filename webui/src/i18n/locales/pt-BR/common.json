@@ -270,6 +270,8 @@
     },
     "rows": {
       "theme": "Tema",
+      "themeStyle": "Estilo de aparência",
+      "glassClarity": "Clareza do vidro",
       "language": "Idioma",
       "provider": "Provedor",
       "model": "Modelo",
@@ -530,6 +532,10 @@
     "values": {
       "light": "Claro",
       "dark": "Escuro",
+      "classic": "Clássico",
+      "liquidGlass": "Liquid Glass",
+      "glassClear": "Transparente",
+      "glassTinted": "Tintado",
       "notAvailable": "Indisponível",
       "enabled": "Habilitado",
       "disabled": "Desabilitado",

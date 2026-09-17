@@ -363,6 +363,9 @@ the relevant control.
 
 Browser-only display preferences, such as file edit display mode, take effect
 immediately for the current browser and do not change gateway configuration.
+The appearance palette is one of them: besides the default classic surfaces,
+**Appearance → Appearance style** offers a Liquid Glass material with its own
+clear and tinted variants. See [WebUI appearance themes](./webui-themes.md).
 
 ## LAN Access
 

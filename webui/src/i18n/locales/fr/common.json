@@ -216,6 +216,8 @@
     },
     "rows": {
       "theme": "Thème",
+      "themeStyle": "Style d'apparence",
+      "glassClarity": "Netteté du verre",
       "language": "Langue",
       "provider": "Fournisseur",
       "model": "Modèle",
@@ -308,6 +310,10 @@
     "values": {
       "light": "Clair",
       "dark": "Sombre",
+      "classic": "Classique",
+      "liquidGlass": "Liquid Glass",
+      "glassClear": "Transparent",
+      "glassTinted": "Teinté",
       "notAvailable": "Indisponible",
       "enabled": "Activé",
       "disabled": "Désactivé",
