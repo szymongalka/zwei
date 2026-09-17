@@ -580,6 +580,8 @@ def _run_gateway(
             prune_dream_sessions = MemoryStore.prune_dream_sessions
 
             store = agent.context.memory
+            # Dream mode is configuration, not code: the store owns the switch.
+            store.dream_mode = config.agents.defaults.dream.mode
             resp = None
             diff_body = ""
             completed = False
@@ -601,6 +603,8 @@ def _run_gateway(
                     on_progress=_silent,
                     runtime=dream_runtime,
                 )
+                # Gated mode: the model returned decisions, the writer applies them.
+                store.apply_dream_result(resp, last_cursor)
                 # The real file delta grounds the audit record; normal completion
                 # decides whether this history batch has finished processing.
                 diff_body = store.dream_content_diff()

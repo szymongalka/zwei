@@ -66,6 +66,9 @@ class DreamConfig(Base):
         default=None,
         validation_alias=AliasChoices("modelOverride", "model", "model_override"),
     )  # Model preset name for Dream sessions
+    # "legacy": the model rewrites the durable files itself. "gated": the model returns
+    # decisions and a deterministic writer applies them (etap P2).
+    mode: Literal["legacy", "gated"] = "legacy"
 
     def build_schedule(self, timezone: str) -> CronSchedule:
         """Build the runtime schedule, preferring the legacy cron override if present."""
