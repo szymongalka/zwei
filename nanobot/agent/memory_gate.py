@@ -296,14 +296,20 @@ def parse_decisions(text: str) -> tuple[list[Decision] | None, list[str]]:
 
 def render_entry(entry: str, *, source: str, observed: str, importance: int,
                  trigger: str = "", suffix: str = "") -> str:
-    """One durable entry with its provenance comment (the P1 entry contract)."""
+    """One durable entry with its provenance comment (the P1 entry contract).
+
+    An entry is one line: a journal candidate can span several bullets, and a
+    multi-line entry would smuggle extra bullets into the index.  Whitespace is
+    collapsed here, in the single place every writer path goes through.
+    """
+    flattened = _WHITESPACE.sub(" ", entry).strip()
     parts = [f"observed: {observed or 'unknown'}", f"source: {source}",
              f"importance: {importance}"]
     if trigger:
         parts.append(f"trigger: {trigger}")
     if suffix:
         parts.append(suffix)
-    return f"- {entry}\n  <!-- {' | '.join(parts)} -->"
+    return f"- {flattened}\n  <!-- {' | '.join(parts)} -->"
 
 
 def _entry_lines(text: str) -> list[str]:

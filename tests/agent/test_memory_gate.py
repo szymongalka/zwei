@@ -183,6 +183,12 @@ class TestWriter:
         assert outcome.contents["MEMORY.md"] == base["MEMORY.md"]
         assert "prior entry loss over limit" in outcome.rejected[-1][1]
 
+    def test_entry_is_rendered_as_a_single_line(self):
+        rendered = render_entry("- [durable] pierwszy fakt\n- [correction] drugi fakt",
+                                source="cursor:1", observed="2026-09-17", importance=5)
+        assert rendered.count("\n") == 1
+        assert "pierwszy fakt - [correction] drugi fakt" in rendered
+
     def test_render_entry_carries_trigger_and_suffix(self):
         rendered = render_entry("fakt", source="cursor:1", observed="2026-09-17", importance=5,
                                 trigger="deploy, gateway", suffix="unconsolidated")
