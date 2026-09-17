@@ -9,6 +9,11 @@ from typing import Literal
 
 LLMUsageSource = Literal["user", "api", "cron", "dream", "system"]
 
+# Workspace workers run their own agent turns without a user present. They must not be
+# classified as user traffic: the agent loop spends the smaller interactive tool budget on
+# a "user" source, which is too little for a bounded background cycle.
+WORKER_SESSION_PREFIXES = ("personal-development:", "personal-evolution:")
+
 _CURRENT_SOURCE: ContextVar[LLMUsageSource] = ContextVar(
     "nanobot_llm_usage_source",
     default="system",
@@ -24,7 +29,7 @@ def source_from_session_key(session_key: str | None) -> LLMUsageSource:
         return "cron"
     if key.startswith("api:"):
         return "api"
-    if key.startswith("system:"):
+    if key.startswith("system:") or key.startswith(WORKER_SESSION_PREFIXES):
         return "system"
     return "user"
 
