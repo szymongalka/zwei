@@ -1,13 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <title>Zwei</title>
-  <desc>A sculpted glass Z on a softly lit silver rounded square.</desc>
+  <desc>A sculpted glass Z on a transparent background.</desc>
   <defs>
-    <linearGradient id="tile" x1="156" y1="40" x2="858" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFF"/><stop offset=".46" stop-color="#F0F5FC"/><stop offset="1" stop-color="#D8E1F0"/>
-    </linearGradient>
-    <radialGradient id="light" cx="0" cy="0" r="1" gradientTransform="translate(280 168) rotate(54) scale(850 730)" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFF"/><stop offset="1" stop-color="#FFF" stop-opacity="0"/>
-    </radialGradient>
     <linearGradient id="depth" x1="298" y1="310" x2="740" y2="756" gradientUnits="userSpaceOnUse">
       <stop stop-color="#548ACC"/><stop offset=".48" stop-color="#547FE0"/><stop offset="1" stop-color="#6359AE"/>
     </linearGradient>
@@ -24,18 +18,11 @@
       <feGaussianBlur stdDeviation="8"/>
     </filter>
     <path id="z" d="M318 320H706L318 704H706"/>
-    <clipPath id="tileClip"><rect width="1024" height="1024" rx="224"/></clipPath>
   </defs>
-  <g clip-path="url(#tileClip)">
-    <rect width="1024" height="1024" fill="url(#tile)"/>
-    <rect width="1024" height="1024" fill="url(#light)"/>
-    <use href="#z" transform="translate(8 39)" stroke="#576994" stroke-opacity=".26" stroke-width="151" stroke-linecap="round" stroke-linejoin="round" filter="url(#shadow)"/>
-    <use href="#z" transform="translate(0 17)" stroke="url(#depth)" stroke-width="150" stroke-linecap="round" stroke-linejoin="round"/>
-    <use href="#z" stroke="url(#rim)" stroke-width="151" stroke-linecap="round" stroke-linejoin="round"/>
-    <use href="#z" stroke="url(#glass)" stroke-width="142" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M315 274H690M357 649L681 328M353 661H707" stroke="#FFF" stroke-opacity=".39" stroke-width="14" stroke-linecap="round" filter="url(#glow)"/>
-    <path d="M317 253H694M286 675L660 306M347 638H707" stroke="url(#rim)" stroke-width="3.5" stroke-linecap="round"/>
-    <rect x="2" y="2" width="1020" height="1020" rx="222" stroke="#FFF" stroke-opacity=".88" stroke-width="4"/>
-    <rect x="7" y="7" width="1010" height="1010" rx="218" stroke="#B5C4DC" stroke-opacity=".18" stroke-width="2"/>
-  </g>
+  <use href="#z" transform="translate(8 39)" stroke="#576994" stroke-opacity=".26" stroke-width="151" stroke-linecap="round" stroke-linejoin="round" filter="url(#shadow)"/>
+  <use href="#z" transform="translate(0 17)" stroke="url(#depth)" stroke-width="150" stroke-linecap="round" stroke-linejoin="round"/>
+  <use href="#z" stroke="url(#rim)" stroke-width="151" stroke-linecap="round" stroke-linejoin="round"/>
+  <use href="#z" stroke="url(#glass)" stroke-width="142" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M315 274H690M357 649L681 328M353 661H707" stroke="#FFF" stroke-opacity=".39" stroke-width="14" stroke-linecap="round" filter="url(#glow)"/>
+  <path d="M317 253H694M286 675L660 306M347 638H707" stroke="url(#rim)" stroke-width="3.5" stroke-linecap="round"/>
 </svg>
