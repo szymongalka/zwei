@@ -119,6 +119,23 @@ class VectorMemory:
                 local.execute("UPDATE snapshot_outbox SET synced=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
         return len(pending)
 
+    def purge(self) -> dict[str, int]:
+        """Drop this namespace's remote projection so it can be rebuilt.
+
+        Used after archive compaction: the remote index must describe the curated
+        layer only, so the rebuild starts from an empty namespace instead of
+        carrying chunks of transcripts that are no longer part of the corpus.
+        """
+        self.initialize()
+        with self.connect() as db:
+            chunks = db.execute("DELETE FROM personal_chunks WHERE namespace=%s",
+                                (self.store.namespace,)).rowcount
+            documents = db.execute("DELETE FROM personal_documents WHERE namespace=%s",
+                                   (self.store.namespace,)).rowcount
+            snapshots = db.execute("DELETE FROM personal_snapshots WHERE namespace=%s",
+                                   (self.store.namespace,)).rowcount
+        return {"chunks": chunks, "documents": documents, "snapshots": snapshots}
+
     def _drop_superseded(self, identifier: str) -> None:
         """Remove the rebuildable projection of one archived version from the remote index."""
         with self.connect() as db:

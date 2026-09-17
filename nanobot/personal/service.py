@@ -21,6 +21,7 @@ from nanobot.personal.connectors import dav_sync, mailbox_sync, send_mail, test_
 from nanobot.personal.ics import refresh_calendar_projections
 from nanobot.personal.store import PersonalStore, readable_excerpt, searchable_text, utcnow
 from nanobot.personal.vector import VectorMemory
+from nanobot.personal.visibility import COLD, HOT
 from nanobot.runtime_context import RuntimeContextBlock, wrap_runtime_context_lines
 from nanobot.session.manager import SessionManager
 
@@ -214,7 +215,7 @@ class PersonalService:
             self.store.set_checkpoint("account_synced:" + identifier, utcnow())
             return {"stored": count, "account_id": identifier}
 
-    def sync_memory(self) -> dict[str, object]:
+    def sync_memory(self) -> dict[str, Any]:
         if self.vector is None:
             raise ValueError("Remote memory is not configured")
         with FileLock(str(self.store.directory / "memory-sync.lock"), timeout=0):
@@ -247,23 +248,27 @@ class PersonalService:
                 self.store.put("native_memory", name, {"content": path.read_text(encoding="utf-8")})
             self.store.set_checkpoint(key, version)
 
-    def excluded_source_prefixes(self, scope: RetrievalScope | None = None) -> list[str]:
-        """Source prefixes kept out of retrieval in the requested scope.
+    def corpus_layers(self, scope: RetrievalScope | None = None) -> tuple[list[str], list[str]]:
+        """Visibility layers and excluded source prefixes for the requested scope.
 
-        ``memory`` (the default) is the curated layer: session transcripts and the
-        workspace-file snapshots are evidence, not memory, and are reachable only
-        through an explicit ``all`` request.  Measured 2026-09-17, those two sources
-        are 97% of the archive's documents and 90% of its characters.
+        ``memory`` (the default) is the curated hot layer, with the configured
+        source prefixes still hidden.  ``all`` adds the cold evidence layer --
+        session transcripts and workspace-file snapshots -- while the quarantine
+        layer (workspace-file copies, background sessions, KSeF documents) is
+        never searched.  Measured 2026-09-17, that evidence layer is 97% of the
+        archive's documents and 90% of its characters.
         """
         if (scope or self.config.retrieval_scope) == "all":
-            return []
-        return list(self.config.retrieval_excluded_source_prefixes)
+            layers: list[str] = [HOT, COLD]
+            return layers, []
+        return [HOT], list(self.config.retrieval_excluded_source_prefixes)
 
     def search(self, query: str, limit: int = 8, *, policy: str | None = None,
                scope: RetrievalScope | None = None) -> list[dict[str, Any]]:
         policy = policy or self.store.checkpoint("retrieval_policy", "hybrid")
-        excluded = self.excluded_source_prefixes(scope)
-        lexical = self.store.search(query, limit * 2, exclude_prefixes=excluded)
+        layers, excluded = self.corpus_layers(scope)
+        lexical = self.store.search(query, limit * 2, exclude_prefixes=excluded,
+                                    visibilities=layers, include_evidence_file=COLD in layers)
         semantic: list[dict[str, Any]] = []
         if self.vector and policy != "lexical" and self.store.checkpoint("remote_state") == "ready":
             try:
