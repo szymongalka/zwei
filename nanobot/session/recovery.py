@@ -12,6 +12,7 @@ import dataclasses
 import json
 from collections.abc import Iterable, Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -29,6 +30,15 @@ from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from nanobot.session.manager import Session, SessionManager
 from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
 from nanobot.webui.session_identity import webui_chat_id, webui_session_key
+
+# Phases whose tools all completed before the restart.  The model loop can be
+# continued from the saved context without replaying a side-effecting call;
+# uncertain tool state (``awaiting_tools``) is never resumed automatically.
+AUTO_RESUME_PHASES = frozenset({"tools_completed", "error"})
+AUTO_RESUME_REASON = "auto_resume_after_restart"
+RESTART_JOURNAL_NAME = "restart-resume.jsonl"
+RESTART_JOURNAL_MAX_BYTES = 1_000_000
+RESTART_JOURNAL_KEEP_LINES = 500
 
 RUNTIME_CHECKPOINT_KEY = "runtime_checkpoint"
 PENDING_USER_TURN_KEY = "pending_user_turn"
@@ -455,6 +465,9 @@ class RecoveryCoordinator:
     sessions: SessionManager
     bus: MessageBus
     unified_session: bool = False
+    # Continue interrupted non-WebUI turns once per checkpoint at gateway start.
+    auto_resume: bool = False
+    journal: Path | None = None
     _active_recovery_tasks: dict[str, asyncio.Task[Any]] = dataclasses.field(
         default_factory=dict,
         init=False,
@@ -510,6 +523,105 @@ class RecoveryCoordinator:
                 )
                 self.sessions.save(session)
                 await self._publish(route[1], failed)
+
+    async def resume_after_restart(self) -> list[dict[str, Any]]:
+        """Continue interrupted turns on channels that have no confirmation prompt.
+
+        The WebUI keeps its explicit continue/dismiss flow, because the browser can
+        show it.  Telegram, cron and local automation sessions cannot, so an
+        interrupted turn whose tools already completed is continued once per
+        checkpoint without asking the user again.  A checkpoint with uncertain
+        tool state is never replayed; the journal records every decision.
+        """
+        started_at = datetime.now().isoformat()
+        decisions: list[dict[str, Any]] = []
+        for key in self._recovery_candidates():
+            try:
+                record = await self._auto_resume_candidate(key)
+            except Exception:
+                logger.exception("restart resume failed for {}", key)
+                record = {"session": key, "decision": "error"}
+            if record is not None:
+                decisions.append(record)
+        self._journal([
+            {"event": "gateway_start", "at": started_at, "auto_resume": self.auto_resume,
+             "decisions": len(decisions)},
+            *decisions,
+        ])
+        return decisions
+
+    async def _auto_resume_candidate(self, key: str) -> dict[str, Any] | None:
+        """Decide and apply one restart continuation; ``None`` means "not my case"."""
+        metadata_payload = self.sessions.read_session_metadata(key)
+        raw_metadata = metadata_payload.get("metadata") if metadata_payload else None
+        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
+        route = self._channel_route_for(key, metadata)
+        if route is None:
+            return None
+        channel, chat_id = route
+        session = self.sessions.get_or_create(key)
+        state = recovery_state_from_metadata(session.metadata)
+        if state and state["status"] == "resuming":
+            return {"session": key, "decision": "skip", "reason": "resume_in_progress"}
+        if state and state.get("reason") == AUTO_RESUME_REASON:
+            return {"session": key, "decision": "skip", "reason": "already_resumed"}
+        checkpoint_value = cast(object, session.metadata.get(RUNTIME_CHECKPOINT_KEY))
+        checkpoint = cast(dict[str, Any], checkpoint_value) if isinstance(checkpoint_value, dict) else None
+        if checkpoint is None:
+            return None
+        phase = checkpoint.get("phase")
+        if not self.auto_resume:
+            return {"session": key, "decision": "skip", "reason": "disabled"}
+        if phase not in AUTO_RESUME_PHASES:
+            return {"session": key, "decision": "skip", "reason": f"phase:{phase}"}
+        if not _runtime_checkpoint_is_well_formed(checkpoint):
+            return {"session": key, "decision": "skip", "reason": "checkpoint_invalid"}
+        recovery_id = uuid4().hex
+        next_state = self._set_state(
+            session,
+            status="resuming",
+            recovery_id=recovery_id,
+            attempts=1,
+            reason=AUTO_RESUME_REASON,
+            resume_message_count=len(session.messages),
+        )
+        self.sessions.save(session)
+        await self._queue_continuation(session, chat_id, next_state, channel=channel)
+        logger.info("restart resume: continuing {} ({})", key, phase)
+        return {"session": key, "decision": "resumed", "channel": channel, "phase": phase,
+                "recovery_id": recovery_id}
+
+    @staticmethod
+    def _channel_route_for(
+        session_key: str,
+        metadata: Mapping[str, Any],
+    ) -> tuple[str, str] | None:
+        """Delivery route of a channel-driven session, or ``None`` for the WebUI ones."""
+        if webui_chat_id(session_key) is not None or session_key == UNIFIED_SESSION_KEY:
+            route = last_channel_from_metadata(metadata)
+            if route is None or route[0] in {"websocket", "cli"}:
+                return None
+            return route
+        channel, _, chat_id = session_key.partition(":")
+        if not channel or not chat_id or channel in {"websocket", "cli"}:
+            return None
+        return channel, chat_id
+
+    def _journal(self, records: list[dict[str, Any]]) -> None:
+        """Append restart decisions to the workspace journal (never gates startup)."""
+        path = self.journal
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                for record in records:
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if path.stat().st_size > RESTART_JOURNAL_MAX_BYTES:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                path.write_text("\n".join(lines[-RESTART_JOURNAL_KEEP_LINES:]) + "\n", encoding="utf-8")
+        except OSError:
+            logger.warning("restart resume journal is not writable: {}", path)
 
     def _recovery_candidates(self) -> list[str]:
         """Discover canonical and transcript-only WebUI sessions cheaply."""
@@ -786,25 +898,33 @@ class RecoveryCoordinator:
         session: Session,
         chat_id: str,
         state: Mapping[str, Any],
+        *,
+        channel: str = "websocket",
     ) -> None:
         recovery_id = cast(str, state["recovery_id"])
+        metadata: dict[str, Any] = {
+            RECOVERY_INBOUND_METADATA_KEY: recovery_id,
+            turn_continuation.INTERNAL_CONTINUATION_META: True,
+            turn_continuation.SKIP_USER_PERSIST_META: True,
+        }
+        if channel == "websocket":
+            metadata.update({
+                "webui": True,
+                "_wants_stream": True,
+                WEBUI_TURN_METADATA_KEY: f"recovery:{recovery_id}",
+            })
         await self.bus.publish_inbound(
             InboundMessage(
-                channel="websocket",
+                channel=channel,
                 sender_id="system:recovery",
                 chat_id=chat_id,
                 content=(
                     "Continue the interrupted request from the saved conversation context. "
-                    "Do not repeat completed work or mention the restart unless it affects the answer."
+                    "Tools you already ran have completed; do not repeat side-effecting work, "
+                    "verify the current state first if unsure, and do not mention the restart "
+                    "unless it affects the answer."
                 ),
-                metadata={
-                    "webui": True,
-                    "_wants_stream": True,
-                    WEBUI_TURN_METADATA_KEY: f"recovery:{recovery_id}",
-                    RECOVERY_INBOUND_METADATA_KEY: recovery_id,
-                    turn_continuation.INTERNAL_CONTINUATION_META: True,
-                    turn_continuation.SKIP_USER_PERSIST_META: True,
-                },
+                metadata=metadata,
                 session_key_override=session.key,
                 require_existing_session=True,
             )

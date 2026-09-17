@@ -19,6 +19,11 @@ from cryptography.fernet import Fernet
 from filelock import FileLock
 
 from nanobot.personal.config import Account
+from nanobot.runtime_context import (
+    RUNTIME_CONTEXT_TAG,
+    public_history_message,
+    strip_runtime_context_envelope,
+)
 
 
 def canonical(value: object) -> bytes:
@@ -53,6 +58,20 @@ def readable_excerpt(text: str, limit: int) -> str:
     """
     condensed = re.sub(r"\s+", " ", html.unescape(text)).strip()
     return condensed[: max(0, limit)]
+
+
+def message_projection(message: Mapping[str, Any]) -> str:
+    """Searchable projection of one persisted message, without injected context.
+
+    The raw record keeps the runtime-context suffix; only the indexed projection
+    drops it, so retrieval cannot quote the archive's own injections back.
+    """
+    return strip_runtime_context_envelope(searchable_text(public_history_message(message)))
+
+
+def projection_text(payload: object) -> str:
+    """Searchable projection of any payload with runtime-context envelopes removed."""
+    return strip_runtime_context_envelope(searchable_text(payload))
 
 
 class PersonalStore:
@@ -197,7 +216,8 @@ class PersonalStore:
                          reason: str = "pre-compaction") -> str:
         """A receipt exists only after the complete snapshot transaction is durable."""
         with self.db() as db:
-            identifiers = [self._put(db, "session:" + session_key, str(index), message)
+            identifiers = [self._put(db, "session:" + session_key, str(index), message,
+                                     text=message_projection(message))
                            for index, message in enumerate(messages)]
             raw = canonical(identifiers)
             identity = hashlib.sha256(canonical([self.namespace, session_key, reason]) + raw).hexdigest()
@@ -231,6 +251,33 @@ class PersonalStore:
             """, (expression, self.namespace, max(1, min(limit, 100)))).fetchall()
         return [{"id": r["id"], "source": r["source"], "key": r["item_key"],
                  "excerpt": r["text"][:1800], "created": r["created"]} for r in rows]
+
+    def rebuild_search_projections(self, limit: int = 2000) -> dict[str, int]:
+        """Recompute search projections that still index injected runtime context.
+
+        Raw records stay immutable (and the archive triggers enforce that); only
+        the rebuildable projection and the remote re-queue change.  Idempotent:
+        a second run over the same rows finds nothing to repair.
+        """
+        with self.db() as db:
+            rows = db.execute(
+                """SELECT d.id, d.payload, d.text AS raw_text, s.text AS projection
+                   FROM documents d LEFT JOIN document_search s ON s.id = d.id
+                   WHERE coalesce(s.text, d.text) LIKE ? LIMIT ?""",
+                ("%" + RUNTIME_CONTEXT_TAG + "%", max(1, min(limit, 10_000))),
+            ).fetchall()
+        repaired = 0
+        for row in rows:
+            current = row["projection"] if row["projection"] is not None else row["raw_text"]
+            payload = json.loads(gzip.decompress(row["payload"]))
+            cleaned = projection_text(payload)
+            if cleaned == current:
+                continue
+            with self.db() as db:
+                db.execute("UPDATE document_search SET text=? WHERE id=?", (cleaned, row["id"]))
+                db.execute("UPDATE outbox SET synced=NULL WHERE id=?", (row["id"],))
+            repaired += 1
+        return {"scanned": len(rows), "repaired": repaired}
 
     def pending(self, limit: int = 50) -> list[dict[str, Any]]:
         """Queue for the remote projection, with the current text and supersede flag."""

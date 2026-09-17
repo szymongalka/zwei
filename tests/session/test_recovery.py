@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import RecoveryStateEvent, SessionUpdatedEvent
 from nanobot.bus.queue import MessageBus
+from nanobot.session.keys import LAST_CHANNEL_METADATA_KEY, UNIFIED_SESSION_KEY
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.recovery import (
     PENDING_FOLLOWUPS_KEY,
@@ -20,6 +22,7 @@ from nanobot.session.recovery import (
     pending_followups,
     record_pending_followup,
 )
+from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_META
 from nanobot.webui import session_list_index, transcript
 
 
@@ -28,10 +31,157 @@ def _persist(manager: SessionManager, session: Session) -> None:
     manager.save(session)
 
 
-def _coordinator(workspace: Path) -> tuple[RecoveryCoordinator, MessageBus, SessionManager]:
+def _coordinator(
+    workspace: Path,
+    **kwargs: object,
+) -> tuple[RecoveryCoordinator, MessageBus, SessionManager]:
     bus = MessageBus()
     sessions = SessionManager(workspace)
-    return RecoveryCoordinator(sessions, bus), bus, sessions
+    return RecoveryCoordinator(sessions, bus, **kwargs), bus, sessions  # type: ignore[arg-type]
+
+
+def _completed_tools_checkpoint() -> dict[str, object]:
+    return {
+        "phase": "tools_completed",
+        "assistant_message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call-1", "function": {"name": "read_file"}}],
+        },
+        "completed_tool_results": [
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "name": "read_file",
+                "content": "saved result",
+            }
+        ],
+        "pending_tool_calls": [],
+    }
+
+
+def _interrupted_channel_session(
+    sessions: SessionManager,
+    key: str = "telegram:7365213421",
+    *,
+    checkpoint: dict[str, object] | None = None,
+) -> Session:
+    session = sessions.get_or_create(key)
+    session.messages.append({"role": "user", "content": "inspect"})
+    session.metadata[PENDING_USER_TURN_KEY] = True
+    session.metadata[RUNTIME_CHECKPOINT_KEY] = checkpoint or _completed_tools_checkpoint()
+    sessions.save(session)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_restart_continues_interrupted_channel_turn(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    _interrupted_channel_session(sessions)
+    journal = tmp_path / "memory" / "restart-resume.jsonl"
+    coordinator, bus, restarted = _coordinator(tmp_path, auto_resume=True, journal=journal)
+
+    decisions = await coordinator.resume_after_restart()
+
+    assert [item["decision"] for item in decisions] == ["resumed"]
+    assert decisions[0]["channel"] == "telegram"
+    assert decisions[0]["phase"] == "tools_completed"
+    message = bus.inbound.get_nowait()
+    assert message.channel == "telegram"
+    assert message.chat_id == "7365213421"
+    assert message.session_key_override == "telegram:7365213421"
+    assert message.metadata[INTERNAL_CONTINUATION_META] is True
+    assert "webui" not in message.metadata
+    state = restarted.get_or_create("telegram:7365213421").metadata[RECOVERY_METADATA_KEY]
+    assert state["status"] == "resuming"
+    assert state["reason"] == "auto_resume_after_restart"
+    lines = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["event"] == "gateway_start"
+    assert lines[0]["auto_resume"] is True
+    assert lines[1]["decision"] == "resumed"
+    assert lines[1]["session"] == "telegram:7365213421"
+
+
+@pytest.mark.asyncio
+async def test_restart_resume_is_idempotent(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    _interrupted_channel_session(sessions)
+    coordinator, bus, _ = _coordinator(
+        tmp_path, auto_resume=True, journal=tmp_path / "memory" / "restart-resume.jsonl"
+    )
+
+    assert [item["decision"] for item in await coordinator.resume_after_restart()] == ["resumed"]
+    second = await coordinator.resume_after_restart()
+
+    assert [item["decision"] for item in second] == ["skip"]
+    # The state left by the first pass is what stops a second gateway start from
+    # queueing the same continuation again.
+    assert second[0]["reason"] in {"already_resumed", "resume_in_progress"}
+    assert bus.inbound.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_uncertain_tool_state_is_never_auto_resumed(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    _interrupted_channel_session(
+        sessions,
+        checkpoint={
+            "phase": "awaiting_tools",
+            "assistant_message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call-1", "function": {"name": "send_mail"}}],
+            },
+            "completed_tool_results": [],
+            "pending_tool_calls": [{"id": "call-1", "function": {"name": "send_mail"}}],
+        },
+    )
+    coordinator, bus, _ = _coordinator(tmp_path, auto_resume=True)
+
+    decisions = await coordinator.resume_after_restart()
+
+    assert decisions[0]["decision"] == "skip"
+    assert decisions[0]["reason"] == "phase:awaiting_tools"
+    assert bus.inbound.empty()
+
+
+@pytest.mark.asyncio
+async def test_restart_resume_can_be_disabled(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    _interrupted_channel_session(sessions)
+    coordinator, bus, _ = _coordinator(tmp_path, auto_resume=False)
+
+    decisions = await coordinator.resume_after_restart()
+
+    assert decisions[0]["decision"] == "skip"
+    assert decisions[0]["reason"] == "disabled"
+    assert bus.inbound.empty()
+
+
+@pytest.mark.asyncio
+async def test_restart_resume_leaves_webui_sessions_to_their_own_flow(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    _interrupted_channel_session(sessions, key="websocket:chat")
+    coordinator, bus, _ = _coordinator(tmp_path, auto_resume=True)
+
+    decisions = await coordinator.resume_after_restart()
+
+    assert decisions == []
+    assert bus.inbound.empty()
+
+
+@pytest.mark.asyncio
+async def test_restart_resume_routes_unified_session_to_its_last_channel(tmp_path: Path) -> None:
+    sessions = SessionManager(tmp_path)
+    session = _interrupted_channel_session(sessions, key=UNIFIED_SESSION_KEY)
+    session.metadata[LAST_CHANNEL_METADATA_KEY] = "telegram:7365213421"
+    sessions.save(session)
+    coordinator, bus, _ = _coordinator(tmp_path, auto_resume=True)
+
+    decisions = await coordinator.resume_after_restart()
+
+    assert decisions[0]["decision"] == "resumed"
+    assert bus.inbound.get_nowait().channel == "telegram"
 
 
 @pytest.mark.asyncio
@@ -756,7 +906,13 @@ async def test_scan_failure_is_visible_instead_of_aborting_other_sessions(
 
 
 @pytest.mark.asyncio
-async def test_bus_remains_quiet_after_recovered_state(tmp_path: Path) -> None:
+async def test_bus_remains_quiet_after_recovered_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Session discovery also reads the shared WebUI sidebar index; a live browser
+    # session would otherwise leak into this workspace-scoped expectation.
+    monkeypatch.setattr(session_list_index, "list_webui_sessions", lambda _sessions: [])
     coordinator, bus, sessions = _coordinator(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.metadata[RECOVERY_METADATA_KEY] = {
@@ -770,4 +926,14 @@ async def test_bus_remains_quiet_after_recovered_state(tmp_path: Path) -> None:
 
     await asyncio.sleep(0)
     assert bus.inbound.empty()
-    assert bus.outbound.empty()
+    # A tiny session emit of its own update is unrelated; what must stay silent
+    # is any recovery notice or recovery state event for an already healed session.
+    published = []
+    while not bus.outbound.empty():
+        message = bus.outbound.get_nowait()
+        published.append(message)
+    assert [
+        message
+        for message in published
+        if isinstance(message.event, RecoveryStateEvent) or message.content
+    ] == []

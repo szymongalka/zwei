@@ -462,7 +462,8 @@ async def test_runtime_context_keeps_one_copy_of_repeated_excerpts(tmp_path):
 
 async def test_runtime_context_dedup_can_be_disabled_by_config(tmp_path):
     service = PersonalService(
-        PersonalConfig(data_dir=str(tmp_path / "data"), retrieval_dedup_threshold=1.0), tmp_path)
+        PersonalConfig(data_dir=str(tmp_path / "data"), retrieval_dedup_threshold=1.0,
+                       retrieval_max_per_source=3), tmp_path)
     repeated = "Regulamin świadczenia usług " + "postanowienie " * 40
     for index in range(3):
         service.store.put("mail:one", f"INBOX:1:{index}", {
@@ -472,6 +473,131 @@ async def test_runtime_context_dedup_can_be_disabled_by_config(tmp_path):
     block = await service.runtime_context(request)
     assert block is not None
     assert block.content.count("Regulamin świadczenia usług") == 3
+
+
+def test_retrieval_anchor_keeps_only_records_with_query_evidence(tmp_path):
+    from nanobot.personal.service import select_retrieval_evidence
+    config = PersonalConfig(data_dir=str(tmp_path / "data"))
+    items = [
+        {"id": "a", "source": "mail:one", "excerpt": "Faktura za prąd 123/2026, kwota 250 zł", "distance": 0.5},
+        {"id": "b", "source": "mail:one", "excerpt": "Zniżka z tytułu zakupu karnetu", "distance": 0.31},
+    ]
+
+    kept, stats = select_retrieval_evidence(items, "faktura za prąd", config)
+
+    assert [item["id"] for item in kept] == ["a"]
+    assert stats["unanchored"] == 1
+    assert stats["candidates"] == 2
+
+
+def test_retrieval_anchor_keeps_strong_semantic_matches_without_a_shared_token(tmp_path):
+    from nanobot.personal.service import select_retrieval_evidence
+    config = PersonalConfig(data_dir=str(tmp_path / "data"))
+    items = [{"id": "paraphrase", "source": "mail:one", "excerpt": "Rachunek za energię", "distance": 0.2}]
+
+    kept, stats = select_retrieval_evidence(items, "ile zapłaciłem za prąd", config)
+
+    assert [item["id"] for item in kept] == ["paraphrase"]
+    assert stats["unanchored"] == 0
+
+
+def test_retrieval_anchor_filter_can_be_disabled(tmp_path):
+    from nanobot.personal.service import select_retrieval_evidence
+    config = PersonalConfig(data_dir=str(tmp_path / "data"), retrieval_require_query_anchor=False)
+    items = [{"id": "b", "source": "mail:one", "excerpt": "Zniżka z tytułu zakupu karnetu", "distance": 0.31}]
+
+    kept, stats = select_retrieval_evidence(items, "faktura za prąd", config)
+
+    assert [item["id"] for item in kept] == ["b"]
+    assert stats["unanchored"] == 0
+
+
+def test_retrieval_limits_repetition_from_one_source(tmp_path):
+    from nanobot.personal.service import select_retrieval_evidence
+    config = PersonalConfig(data_dir=str(tmp_path / "data"))
+    items = [
+        {"id": "m1", "source": "mail:one", "excerpt": "Faktura prąd 1", "distance": 0.2},
+        {"id": "m2", "source": "mail:one", "excerpt": "Faktura prąd 2", "distance": 0.21},
+        {"id": "m3", "source": "mail:one", "excerpt": "Faktura prąd 3", "distance": 0.22},
+        {"id": "s1", "source": "session:telegram:1", "excerpt": "Ustalenie o fakturze prąd", "distance": 0.25},
+    ]
+
+    kept, stats = select_retrieval_evidence(items, "faktura prąd", config)
+
+    assert [item["id"] for item in kept] == ["m1", "m2", "s1"]
+    assert stats["source_capped"] == 1
+    assert PersonalConfig(data_dir="x").retrieval_max_per_source == 2
+    with pytest.raises(ValidationError):
+        PersonalConfig(data_dir="x", retrieval_max_per_source=0)
+
+
+async def test_retrieval_stats_journal_records_every_attempt(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    (tmp_path / "memory").mkdir()
+    service.store.put("mail:one", "INBOX:1:1", {
+        "headers": {"Subject": "Faktura"},
+        "body": "Faktura za prąd numer 123/2026, kwota 250 zł, termin 14 dni"})
+    request = RequestContext(channel="telegram", chat_id="1",
+                             original_user_text="faktura za prąd numer")
+
+    block = await service.runtime_context(request)
+
+    assert block is not None
+    lines = (tmp_path / "memory" / "retrieval_stats.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["kept"] == 1
+    assert record["candidates"] >= 1
+    assert record["characters"] > 0
+    assert record["latency_ms"] >= 0
+    # A query with nothing to retrieve still journals the empty outcome.
+    noise = RequestContext(channel="telegram", chat_id="1",
+                           original_user_text="ztgq wumpel blorptix kszynfel")
+    assert await service.runtime_context(noise) is None
+    lines = (tmp_path / "memory" / "retrieval_stats.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[1])["kept"] == 0
+
+
+def test_retrieval_stats_journal_can_be_disabled(tmp_path):
+    service = PersonalService(
+        PersonalConfig(data_dir=str(tmp_path / "data"), retrieval_stats_enabled=False), tmp_path)
+    (tmp_path / "memory").mkdir()
+    service._record_retrieval_stats("query", [], [], {"candidates": 0, "unanchored": 0,
+                                                     "source_capped": 0, "duplicate": 0}, 1.0)
+    assert not (tmp_path / "memory" / "retrieval_stats.jsonl").exists()
+
+
+def test_archive_projection_never_indexes_its_own_runtime_context(store):
+    from nanobot.runtime_context import RUNTIME_CONTEXT_END, RUNTIME_CONTEXT_TAG
+    suffix = f"{RUNTIME_CONTEXT_TAG}\nRetrieved personal archive records... marker-injection\n{RUNTIME_CONTEXT_END}"
+    message = {
+        "role": "user",
+        "content": f"prawdziwa treść polecenia\n\n{suffix}",
+        "_runtime_context": {"version": 1, "sources": ["personal_memory"], "suffix": suffix},
+    }
+
+    store.archive_messages("telegram:1", [message], "turn")
+
+    assert store.search("markerinjection", 5) == []
+    hits = store.search("prawdziwa", 5)
+    assert hits and "prawdziwa treść polecenia" in hits[0]["excerpt"]
+    # The raw record keeps what the model actually saw.
+    assert RUNTIME_CONTEXT_TAG in store.get(hits[0]["id"])["payload"]["content"]
+
+
+def test_legacy_projection_with_injected_context_is_repaired_once(store):
+    from nanobot.runtime_context import RUNTIME_CONTEXT_END, RUNTIME_CONTEXT_TAG
+    dirty = f"widoczny tekst\n\n{RUNTIME_CONTEXT_TAG}\nstaryszum wpisu\n{RUNTIME_CONTEXT_END}"
+    store.put("session:telegram:1", "0", {"role": "user", "content": dirty}, text=dirty)
+    assert store.search("staryszum", 5)
+
+    first = store.rebuild_search_projections()
+
+    assert first == {"scanned": 1, "repaired": 1}
+    assert store.search("staryszum", 5) == []
+    assert store.search("widoczny", 5)
+    assert store.rebuild_search_projections() == {"scanned": 0, "repaired": 0}
 
 
 def test_memory_warmup_loads_the_model_and_remote_schema_before_the_first_turn(tmp_path):

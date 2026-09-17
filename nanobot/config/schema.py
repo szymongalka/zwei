@@ -157,6 +157,11 @@ class AgentDefaults(Base):
         validation_alias=AliasChoices("progressPingSeconds"),
         serialization_alias="progressPingSeconds",
     )  # Seconds of interactive silence before a turn pings that it is still working (0 = off)
+    resume_after_restart: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("resumeAfterRestart"),
+        serialization_alias="resumeAfterRestart",
+    )  # Continue interrupted non-WebUI turns once per checkpoint at gateway start
     reasoning_effort: str | None = None  # low / medium / high / xhigh / max / adaptive / none — LLM thinking effort; None preserves the provider default
     timezone: str = "UTC"  # Effective IANA timezone, e.g. "Asia/Shanghai"
     timezone_mode: Literal["auto", "manual"] = "auto"

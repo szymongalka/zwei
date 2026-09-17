@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -30,6 +31,9 @@ MIN_EXCERPT_CHARS = 32
 # Distinct records matter more than repeated copies of one, so candidates are over-fetched.
 RETRIEVAL_LIMIT = 4
 RETRIEVAL_CANDIDATES = 8
+# The retrieval journal is evidence, not memory: it is trimmed, never unbounded.
+RETRIEVAL_STATS_MAX_BYTES = 1_000_000
+RETRIEVAL_STATS_KEEP_LINES = 1000
 
 
 def excerpt_similarity(left: str, right: str) -> float:
@@ -63,6 +67,67 @@ def collapse_duplicate_excerpts(items: list[dict[str, Any]], threshold: float) -
             continue
         kept.append(item)
     return kept
+
+
+def query_anchor_prefixes(query: str, min_chars: int) -> set[str]:
+    """Short, inflection-tolerant anchors taken from the query tokens themselves."""
+    return {
+        token[:min_chars].lower()
+        for token in re.findall(r"\w+", query, re.UNICODE)
+        if len(token) >= min_chars
+    }
+
+
+def excerpt_has_anchor(excerpt: str, prefixes: set[str]) -> bool:
+    """Whether the projected excerpt carries any query anchor (prefix match)."""
+    lowered = excerpt.lower()
+    return any(prefix in lowered for prefix in prefixes)
+
+
+def record_similarity(item: Mapping[str, Any]) -> float | None:
+    """Cosine similarity of a semantic hit; ``None`` for lexical-only records."""
+    distance = item.get("distance")
+    if isinstance(distance, (int, float)) and not isinstance(distance, bool):
+        return max(0.0, min(1.0, 1.0 - float(distance)))
+    return None
+
+
+def select_retrieval_evidence(
+    items: list[dict[str, Any]],
+    query: str,
+    config: PersonalConfig,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Keep records carrying query evidence, then cap repetition per source.
+
+    Measuring the live archive (2026-09-17) showed that a fixed similarity floor
+    cannot separate relevant from irrelevant semantic hits: unrelated newsletter
+    fragments score 0.61-0.67 while genuine hits score 0.63-0.79.  What does
+    separate them is whether the excerpt carries any token from the query, so
+    semantic-only records without an anchor are dropped unless they are strong
+    on their own.  Lexical (BM25) hits always carry a query token, which makes
+    the rule a no-op for them.
+    """
+    stats = {"candidates": len(items), "unanchored": 0, "source_capped": 0}
+    prefixes = query_anchor_prefixes(query, config.retrieval_anchor_min_chars)
+    anchored: list[dict[str, Any]] = []
+    for item in items:
+        if config.retrieval_require_query_anchor and prefixes:
+            similarity = record_similarity(item)
+            strong = similarity is not None and similarity >= config.retrieval_anchor_strong_similarity
+            if not excerpt_has_anchor(str(item.get("excerpt", "")), prefixes) and not strong:
+                stats["unanchored"] += 1
+                continue
+        anchored.append(item)
+    counts: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    for item in anchored:
+        source = str(item.get("source", ""))
+        if counts.get(source, 0) >= config.retrieval_max_per_source:
+            stats["source_capped"] += 1
+            continue
+        counts[source] = counts.get(source, 0) + 1
+        kept.append(item)
+    return kept, stats
 
 
 class PersonalAction(BaseModel):
@@ -200,6 +265,7 @@ class PersonalService:
         query = (request.original_user_text or "").strip()
         if len(query) < 8 or query.startswith("/"):
             return None
+        started = time.perf_counter()
         try:
             results = await asyncio.wait_for(
                 asyncio.to_thread(self.search, query[:4000], RETRIEVAL_CANDIDATES),
@@ -208,9 +274,13 @@ class PersonalService:
         except Exception as exc:  # noqa: BLE001 - retrieval is best-effort and never gates a turn
             logger.warning("Personal archive retrieval skipped ({})", type(exc).__name__)
             return None
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
         informative = [item for item in results if len(item["excerpt"]) >= MIN_EXCERPT_CHARS]
-        informative = collapse_duplicate_excerpts(
-            informative, self.config.retrieval_dedup_threshold)[:RETRIEVAL_LIMIT]
+        selected, evidence = select_retrieval_evidence(informative, query, self.config)
+        collapsed = collapse_duplicate_excerpts(selected, self.config.retrieval_dedup_threshold)
+        evidence["duplicate"] = len(selected) - len(collapsed)
+        informative = collapsed[:RETRIEVAL_LIMIT]
+        self._record_retrieval_stats(query, results, informative, evidence, latency_ms)
         if not informative:
             return None
         encoded = json.dumps(informative, ensure_ascii=False).replace("[", "\\u005b").replace("]", "\\u005d")
@@ -219,6 +289,44 @@ class PersonalService:
             "These may include older versions; check timestamps and sources before acting. Use personal_archive get to read more.",
             encoded,
         ]))
+
+    def _record_retrieval_stats(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        kept: list[dict[str, Any]],
+        evidence: Mapping[str, int],
+        latency_ms: float,
+    ) -> None:
+        """Append one evidence line per retrieval attempt; never gates a turn."""
+        if not self.config.retrieval_stats_enabled:
+            return
+        path = self.workspace / "memory" / "retrieval_stats.jsonl"
+        try:
+            if not path.parent.is_dir():
+                return
+            similarities = [value for value in map(record_similarity, candidates) if value is not None]
+            record = {
+                "at": utcnow(),
+                "query_chars": len(query),
+                "policy": self.store.checkpoint("retrieval_policy", "hybrid"),
+                "candidates": evidence["candidates"],
+                "kept": len(kept),
+                "unanchored": evidence["unanchored"],
+                "source_capped": evidence["source_capped"],
+                "duplicate": evidence["duplicate"],
+                "characters": sum(len(str(item.get("excerpt", ""))) for item in kept),
+                "sources": len({str(item.get("source", "")) for item in kept}),
+                "strongest_similarity": round(max(similarities), 4) if similarities else None,
+                "latency_ms": latency_ms,
+            }
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if path.stat().st_size > RETRIEVAL_STATS_MAX_BYTES:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                path.write_text("\n".join(lines[-RETRIEVAL_STATS_KEEP_LINES:]) + "\n", encoding="utf-8")
+        except OSError:
+            logger.debug("retrieval stats journal is not writable: {}", path)
 
     def hook(self, turn: AgentTurnHookContext) -> AgentHook:
         store = self.store
@@ -296,8 +404,23 @@ class PersonalService:
         except Exception as exc:
             logger.warning("Personal remote memory warmup skipped ({})", type(exc).__name__)
 
+    def repair_archive_projections(self) -> dict[str, int]:
+        """Idempotent cleanup of indexed projections that still embed injected context."""
+        result = self.store.rebuild_search_projections()
+        if result["repaired"]:
+            logger.info(
+                "Archive projections repaired: {} of {} scanned",
+                result["repaired"],
+                result["scanned"],
+            )
+        return result
+
     async def run(self) -> None:
         await self._warm_memory_once()
+        try:
+            await asyncio.to_thread(self.repair_archive_projections)
+        except Exception as exc:
+            logger.warning("Archive projection repair failed ({})", type(exc).__name__)
         while True:
             try:
                 await asyncio.to_thread(self.sync_workspace_memory)
