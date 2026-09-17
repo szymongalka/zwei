@@ -23,9 +23,11 @@ class DevelopmentOutcome(AgentHook):
     def __init__(self) -> None:
         super().__init__()
         self.stop_reason: str | None = None
+        self.final_content: str | None = None
 
     async def after_run(self, context: AgentRunHookContext) -> None:
         self.stop_reason = context.stop_reason
+        self.final_content = context.final_content
 
 
 async def development_cycle(service: PersonalService, agent: AgentLoop) -> None:
@@ -46,9 +48,14 @@ async def development_cycle(service: PersonalService, agent: AgentLoop) -> None:
             ), timeout=service.config.development_timeout_seconds)
             if outcome.stop_reason != "completed":
                 raise RuntimeError("Development turn did not complete successfully")
-            if response is None or not response.content:
+            # The agent loop suppresses the outbound copy when the turn already reported
+            # through the message tool to the same route, so a missing response is not a
+            # missing result. Fall back to the content the run itself produced.
+            content = (response.content if response is not None else "") or ""
+            content = content.strip() or (outcome.final_content or "").strip()
+            if not content:
                 raise ValueError("Development turn produced no result")
-            service.store.log_evolution("development_completed", {"summary": response.content[:8000]})
+            service.store.log_evolution("development_completed", {"summary": content[:8000]})
             service.store.set_checkpoint("development_state", "completed")
         except asyncio.CancelledError:
             service.store.set_checkpoint("development_state", "interrupted")

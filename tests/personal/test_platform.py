@@ -334,6 +334,26 @@ async def test_autonomous_development_uses_existing_agent_and_records_result(tmp
     assert service.store.status()["evolution"][0]["detail"]["summary"] == "Verified one improvement"
 
 
+async def test_development_result_survives_a_suppressed_outbound(tmp_path):
+    """A suppressed duplicate delivery must not turn a finished cycle into a failure.
+
+    The agent loop drops the outbound copy when the turn already reported through the
+    message tool to the same route; the recorded result is the turn content.
+    """
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+
+    async def suppressed(*args, **kwargs):
+        await kwargs["hooks"][0].after_run(AgentRunHookContext(
+            [], stop_reason="completed", final_content="Reported through the message tool"))
+        return None
+
+    agent = SimpleNamespace(workspace=tmp_path, process_direct=AsyncMock(side_effect=suppressed))
+    await development_cycle(service, agent)
+    assert service.store.checkpoint("development_state") == "completed"
+    assert (service.store.status()["evolution"][0]["detail"]["summary"]
+            == "Reported through the message tool")
+
+
 async def test_development_failure_is_recorded_without_secret_exception_text(tmp_path):
     service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
     agent = SimpleNamespace(workspace=tmp_path, process_direct=AsyncMock(side_effect=ValueError("secret-provider-detail")))
