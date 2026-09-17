@@ -574,6 +574,7 @@ async def test_retrieval_stats_journal_records_every_attempt(tmp_path):
     assert len(lines) == 1
     record = json.loads(lines[0])
     assert record["kept"] == 1
+    assert record["scope"] == "memory"
     assert record["candidates"] >= 1
     assert record["characters"] > 0
     assert record["latency_ms"] >= 0
@@ -638,6 +639,57 @@ def test_memory_warmup_loads_the_model_and_remote_schema_before_the_first_turn(t
     assert calls == ["initialize", ("embed", ["warmup"])]
     assert service.warm_memory() is True
     assert service.store.checkpoint("remote_state", "pending") == "pending"  # warmup is not a sync
+
+
+def test_store_search_can_exclude_whole_source_layers(store):
+    store.put("mail:one", "INBOX:1:1", {"headers": {"Subject": "Raport"}, "body": "raport kwartalny gotowy"})
+    store.put("session:telegram:1", "0", {"role": "user", "content": "raport kwartalny gotowy"})
+    assert {item["source"] for item in store.search("raport kwartalny", 5)} == {
+        "mail:one", "session:telegram:1"}
+    kept = store.search("raport kwartalny", 5, exclude_prefixes=["session:"])
+    assert [item["source"] for item in kept] == ["mail:one"]
+
+
+def test_retrieval_scope_hides_evidence_sources_from_the_memory_layer(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    service.store.put("mail:one", "INBOX:1:1", {
+        "headers": {"Subject": "Faktura"}, "body": "faktura za prąd 250 zł, termin 14 dni"})
+    service.store.put("native_memory", "memory/MEMORY.md", {
+        "content": "faktura za prąd 250 zł, termin 14 dni"})
+    service.store.put("session:telegram:1", "0", {
+        "role": "user", "content": "faktura za prąd 250 zł, termin 14 dni"})
+    assert [item["source"] for item in service.search("faktura prąd", 5)] == ["mail:one"]
+    everything = service.search("faktura prąd", 5, scope="all")
+    assert {item["source"] for item in everything} == {"mail:one", "native_memory", "session:telegram:1"}
+
+
+async def test_runtime_context_never_injects_evidence_sources(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    body = "raport dzienny gotowy do wysyłki, czeka na akceptację"
+    service.store.put("session:heartbeat", "0", {"role": "assistant", "content": body})
+    request = RequestContext(channel="telegram", chat_id="1",
+                             original_user_text="raport dzienny gotowy do wysyłki")
+    assert await service.runtime_context(request) is None
+    service.store.put("mail:one", "INBOX:1:1", {"headers": {"Subject": "Raport"}, "body": body})
+    block = await service.runtime_context(request)
+    assert block is not None and "mail:one" in block.content
+
+
+def test_retrieval_scope_defaults_to_memory_and_is_configurable():
+    config = PersonalConfig(data_dir="x")
+    assert config.retrieval_scope == "memory"
+    assert config.retrieval_excluded_source_prefixes == ["native_memory", "session:"]
+    assert PersonalConfig(data_dir="x", retrieval_scope="all").retrieval_scope == "all"
+    with pytest.raises(ValidationError):
+        PersonalConfig(data_dir="x", retrieval_scope="everything")
+
+
+def test_personal_action_accepts_only_known_scopes():
+    from nanobot.personal.service import PersonalAction
+    assert PersonalAction(action="search", query="x").scope == "memory"
+    assert PersonalAction(action="search", query="x", scope="all").scope == "all"
+    with pytest.raises(ValidationError):
+        PersonalAction(action="search", query="x", scope="session")
 
 
 def test_memory_warmup_failure_never_gates_startup(tmp_path):

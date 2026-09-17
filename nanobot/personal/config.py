@@ -26,6 +26,11 @@ class PersonalConfig(Base):
     retrieval_anchor_strong_similarity: float = Field(default=0.72, ge=0.0, le=1.0)
     retrieval_max_per_source: int = Field(default=2, ge=1, le=8)
     retrieval_stats_enabled: bool = True
+    # Retrieval scope: "memory" is the curated layer, "all" adds the evidence sources
+    # (session transcripts, workspace-file snapshots) that are not memory.
+    retrieval_scope: Literal["memory", "all"] = "memory"
+    retrieval_excluded_source_prefixes: list[str] = Field(
+        default_factory=lambda: ["native_memory", "session:"], max_length=20)
     development_enabled: bool = False
     development_interval_seconds: int = Field(default=86400, ge=3600)
     development_timeout_seconds: int = Field(default=1200, ge=60, le=3600)

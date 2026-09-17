@@ -9,7 +9,7 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -236,19 +236,31 @@ class PersonalStore:
         return {"id": row["id"], "source": row["source"], "key": row["item_key"],
                 "created": row["created"], "payload": json.loads(gzip.decompress(row["payload"]))}
 
-    def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+    def search(self, query: str, limit: int = 10, *,
+               exclude_prefixes: Sequence[str] = ()) -> list[dict[str, Any]]:
+        """Rank lexical hits, optionally hiding whole source layers.
+
+        ``exclude_prefixes`` filters by source prefix (for example ``session:``)
+        before the limit is applied, so a scope never spends its budget on a
+        layer it does not want.  Ranking itself is unchanged.
+        """
         words = re.findall(r"\w+", query, re.UNICODE)[:20]
         if not words:
             return []
         expression = " OR ".join('"' + word + '"' for word in words)
+        exclusion = "".join(" AND d.source NOT LIKE ?" for _ in exclude_prefixes)
+        parameters: list[object] = [expression, self.namespace]
+        parameters.extend(f"{prefix}%" for prefix in exclude_prefixes)
+        parameters.append(max(1, min(limit, 100)))
         with self.db() as db:
-            rows = db.execute("""
+            rows = db.execute(f"""
                 SELECT d.id,d.source,d.item_key,document_search.text,d.created
                 FROM document_search JOIN documents d ON d.id=document_search.id
                 WHERE document_search MATCH ? AND d.namespace=?
                   AND d.id NOT IN (SELECT id FROM document_versions WHERE superseded IS NOT NULL)
+                  {exclusion}
                 ORDER BY bm25(document_search) LIMIT ?
-            """, (expression, self.namespace, max(1, min(limit, 100)))).fetchall()
+            """, parameters).fetchall()
         return [{"id": r["id"], "source": r["source"], "key": r["item_key"],
                  "excerpt": r["text"][:1800], "created": r["created"]} for r in rows]
 

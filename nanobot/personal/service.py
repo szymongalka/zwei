@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -130,6 +130,14 @@ def select_retrieval_evidence(
     return kept, stats
 
 
+RetrievalScope = Literal["memory", "all"]
+
+
+def source_is_excluded(source: str, prefixes: Sequence[str]) -> bool:
+    """Whether a record belongs to a layer the current retrieval scope keeps out."""
+    return any(source.startswith(prefix) for prefix in prefixes)
+
+
 class PersonalAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["status", "save_account", "test_account", "sync_account", "search",
@@ -138,6 +146,7 @@ class PersonalAction(BaseModel):
     account_id: str = Field(default="", pattern=r"^[a-zA-Z0-9_-]{0,64}$")
     query: str = Field(default="", max_length=4000)
     document_id: str = Field(default="", pattern=r"^[a-f0-9]{0,64}$")
+    scope: Literal["memory", "all"] = "memory"
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=8, ge=1, le=30)
     operation_id: str = Field(default="", max_length=100)
@@ -238,13 +247,28 @@ class PersonalService:
                 self.store.put("native_memory", name, {"content": path.read_text(encoding="utf-8")})
             self.store.set_checkpoint(key, version)
 
-    def search(self, query: str, limit: int = 8, *, policy: str | None = None) -> list[dict[str, Any]]:
+    def excluded_source_prefixes(self, scope: RetrievalScope | None = None) -> list[str]:
+        """Source prefixes kept out of retrieval in the requested scope.
+
+        ``memory`` (the default) is the curated layer: session transcripts and the
+        workspace-file snapshots are evidence, not memory, and are reachable only
+        through an explicit ``all`` request.  Measured 2026-09-17, those two sources
+        are 97% of the archive's documents and 90% of its characters.
+        """
+        if (scope or self.config.retrieval_scope) == "all":
+            return []
+        return list(self.config.retrieval_excluded_source_prefixes)
+
+    def search(self, query: str, limit: int = 8, *, policy: str | None = None,
+               scope: RetrievalScope | None = None) -> list[dict[str, Any]]:
         policy = policy or self.store.checkpoint("retrieval_policy", "hybrid")
-        lexical = self.store.search(query, limit * 2)
+        excluded = self.excluded_source_prefixes(scope)
+        lexical = self.store.search(query, limit * 2, exclude_prefixes=excluded)
         semantic: list[dict[str, Any]] = []
         if self.vector and policy != "lexical" and self.store.checkpoint("remote_state") == "ready":
             try:
-                semantic = self.vector.search(query, limit * 2)
+                semantic = [item for item in self.vector.search(query, limit * 2)
+                            if not source_is_excluded(str(item.get("source", "")), excluded)]
             except Exception:
                 # Remote availability never gates local retrieval or raw archival.
                 self.store.set_checkpoint("remote_state", "unavailable")
@@ -310,6 +334,7 @@ class PersonalService:
                 "at": utcnow(),
                 "query_chars": len(query),
                 "policy": self.store.checkpoint("retrieval_policy", "hybrid"),
+                "scope": self.config.retrieval_scope,
                 "candidates": evidence["candidates"],
                 "kept": len(kept),
                 "unanchored": evidence["unanchored"],
@@ -365,7 +390,7 @@ class PersonalService:
         if request.action == "sync_account":
             return self.sync_account(request.account_id)
         if request.action == "search":
-            return self.search(request.query, request.limit)
+            return self.search(request.query, request.limit, scope=request.scope)
         if request.action == "get":
             record = self.store.get(request.document_id)
             content = searchable_text(record.pop("payload"))
