@@ -26,6 +26,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
+from nanobot.session_kinds import is_candidate
+
 Visibility = Literal["hot", "cold", "quarantine"]
 
 HOT: Visibility = "hot"
@@ -34,16 +36,6 @@ QUARANTINE: Visibility = "quarantine"
 
 #: Sources that are not part of the memory corpus at all.
 QUARANTINE_SOURCE_PREFIXES: tuple[str, ...] = ("native_memory", "ksef")
-
-#: Session keys produced by a schedule, a background worker or a diagnostic run.
-BACKGROUND_SESSION_PREFIXES: tuple[str, ...] = (
-    "heartbeat",
-    "personal-development",
-    "personal-evolution",
-    "cron",
-    "subagent",
-    "diagnostic",
-)
 
 
 def message_role(payload: object) -> str:
@@ -60,7 +52,9 @@ def classify(source: str, payload: object = None) -> Visibility:
         return QUARANTINE
     if source.startswith("session:"):
         key = source[len("session:"):]
-        if any(key.startswith(prefix) for prefix in BACKGROUND_SESSION_PREFIXES):
+        # One source of truth with the memory journal: scheduled and background
+        # sessions are not candidates, in the corpus or in Dream.
+        if not is_candidate(key):
             return QUARANTINE
         return HOT if message_role(payload) == "user" else COLD
     return HOT

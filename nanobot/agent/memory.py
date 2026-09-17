@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from nanobot.providers.conversation_state import ProviderConversationStateContro
 from nanobot.runtime_context import public_history_messages
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.summary import is_summary_checkpoint, session_summary_from_metadata
+from nanobot.session_kinds import is_candidate, session_kind
 from nanobot.utils.gitstore import GitStore
 from nanobot.utils.helpers import (
     build_assistant_message,
@@ -87,6 +89,9 @@ class MemoryStore:
         self._dream_prompt_oversize_logged = False
         self._last_dream_batch: dict[str, Any] | None = None
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
+        # Ingest hygiene is on by default; the environment switch is the rollback
+        # lever, because the journal has no configuration section of its own.
+        self.history_hygiene = _env_flag(HISTORY_HYGIENE_ENV, default=True)
         self._git = GitStore(workspace, tracked_files=[
             "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
         ])
@@ -287,6 +292,7 @@ class MemoryStore:
         *,
         max_chars: int | None = None,
         session_key: str | None = None,
+        origin: str = "agent",
     ) -> int:
         """Append *entry* to history.jsonl and return its auto-incrementing cursor.
 
@@ -301,10 +307,26 @@ class MemoryStore:
         applied as a final safety net: individual callers should cap their own
         content more tightly; this default only exists to catch unintentional
         large writes (e.g. an LLM echoing its input back as a "summary").
+
+        Every record carries its provenance: the kind of session that produced it,
+        who is accountable for it (*origin*) and a content hash, so the Dream gate
+        can drop scheduled-session noise and repeated content without reading the
+        prose. With ingest hygiene enabled (the default) an entry that only
+        restates a recent one is not written at all.
         """
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         raw = entry.rstrip()
         content = self._normalize_history_entry(entry, max_chars=max_chars)
+        if self.history_hygiene:
+            rejection = self._ingest_rejection(content)
+            if rejection:
+                logger.debug(
+                    "history entry skipped by ingest hygiene ({}): {} chars from {}",
+                    rejection,
+                    len(content),
+                    session_key or "unknown",
+                )
+                return self.get_latest_cursor()
         # Cursor allocation and the append must be atomic: concurrent writers
         # could otherwise read the same current cursor and emit duplicates.
         with self._append_lock:
@@ -315,13 +337,35 @@ class MemoryStore:
                     "persisting empty content to avoid re-polluting Dream input",
                     cursor,
                 )
-            record = {"cursor": cursor, "timestamp": ts, "content": content}
+            record = {"cursor": cursor, "timestamp": ts, "content": content,
+                      "session_kind": session_kind(session_key), "origin": origin,
+                      "content_hash": _content_hash(content)}
             if session_key:
                 record["session_key"] = session_key
             with open(self.history_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             self._cursor_file.write_text(str(cursor), encoding="utf-8")
         return cursor
+
+    def _ingest_rejection(self, content: str) -> str:
+        """Why this content does not deserve a journal entry, or empty when it does.
+
+        Empty content is not rejected: `strip_think` deliberately persists an empty
+        record instead of a leaked template, and that contract belongs to the
+        journal, not to this filter.
+        """
+        if not content.strip():
+            return ""
+        if _is_boilerplate(content):
+            return "boilerplate"
+        digest = _content_hash(content)
+        for entry in reversed(self._read_entries()[-HISTORY_DEDUP_WINDOW:]):
+            stored = entry.get("content_hash")
+            if not isinstance(stored, str):
+                stored = _content_hash(str(entry.get("content", "")))
+            if stored == digest:
+                return "duplicate"
+        return ""
 
     @staticmethod
     def _valid_cursor(value: Any) -> int | None:
@@ -555,23 +599,45 @@ class MemoryStore:
         if not entries:
             return None
 
-        original_batch = entries[:max_entries]
-        remaining = len(entries) - len(original_batch)
+        window = entries[: max(DREAM_SCAN_WINDOW, max_entries)]
+        selected: list[dict[str, Any]] = []
+        covered = 0
+        for index, entry in enumerate(window):
+            if self.history_hygiene and not is_candidate(entry.get("session_key")):
+                continue
+            selected.append(entry)
+            covered = index + 1
+            if len(selected) >= max_entries:
+                break
+        if not selected:
+            logger.info(
+                "Dream: {} unprocessed entries, none is a memory candidate; staying idle",
+                len(window),
+            )
+            return None
+        original_batch = selected
+        excluded = covered - len(selected)
+        remaining = len(entries) - covered
         batch, duplicates = dedupe_history_batch(original_batch)
+        batch, repeats = _dedupe_by_content_hash(batch)
         history_text = "\n".join(
             f"[{e['timestamp']}] {truncate_text(e['content'], DREAM_PROMPT_ENTRY_CHARS)}"
             for e in batch
         )
         template = self._dream_template()
-        header = self._dream_batch_header(batch, remaining=remaining, duplicates=duplicates)
+        header = self._dream_batch_header(batch, covered=covered, remaining=remaining,
+                                          duplicates=duplicates, excluded=excluded,
+                                          repeats=repeats)
         prompt = f"{template}\n\n{header}\n\n## Conversation History\n{history_text}"
         # The cursor must move past every entry of the batch, including collapsed
         # duplicates: their information is already covered by the newest copy.
         last_batch_cursor = original_batch[-1]["cursor"]
         self._last_dream_batch = {
-            "entries": len(original_batch),
+            "entries": covered,
             "shown": len(batch),
             "duplicates": duplicates,
+            "excluded": excluded,
+            "repeats": repeats,
             "first_cursor": original_batch[0]["cursor"],
             "last_cursor": last_batch_cursor,
             "remaining": remaining,
@@ -582,21 +648,32 @@ class MemoryStore:
     def _dream_batch_header(
         batch: list[dict[str, Any]],
         *,
+        covered: int,
         remaining: int,
         duplicates: int,
+        excluded: int = 0,
+        repeats: int = 0,
     ) -> str:
         """Tell Dream exactly which slice of the journal it is reading."""
         first = batch[0]["cursor"] if batch else None
         last = batch[-1]["cursor"] if batch else None
         lines = [
             "## History batch",
-            f"- This run covers history cursors {first}-{last} ({len(batch)} entries).",
+            f"- This run covers history cursors {first}-{last}: {covered} entries, "
+            f"{len(batch)} shown below.",
             f"- {remaining} further journal entries remain unprocessed; they arrive in a later run.",
         ]
+        if excluded:
+            lines.append(
+                f"- {excluded} entries from scheduled or background sessions were not candidates "
+                "for durable memory and are not shown."
+            )
         if duplicates:
             lines.append(
                 f"- {duplicates} near-duplicate entries were collapsed in this view; the newest copy is shown."
             )
+        if repeats:
+            lines.append(f"- {repeats} exact repeats were collapsed in this view.")
         lines.append(
             "- Consolidate only what this batch supports and do not claim the whole journal was processed."
         )
@@ -618,6 +695,8 @@ class MemoryStore:
             "entries": batch["entries"],
             "shown": batch["shown"],
             "duplicates": batch["duplicates"],
+            "excluded": batch.get("excluded", 0),
+            "repeats": batch.get("repeats", 0),
             "cursors": [batch["first_cursor"], batch["last_cursor"]],
             "remaining": batch["remaining"],
             "completed": bool(completed),
@@ -748,7 +827,9 @@ class MemoryStore:
     ) -> str:
         """Persist and return a bounded raw checkpoint when summarization degrades."""
         checkpoint = self._build_raw_checkpoint(messages, max_chars=max_chars)
-        self.append_history(checkpoint, session_key=session_key)
+        # A raw dump quotes the transcript verbatim, so it is not the agent's own
+        # consolidation: mark it untrusted, as the conservative provenance class.
+        self.append_history(checkpoint, session_key=session_key, origin="untrusted")
         logger.warning(
             "Memory consolidation degraded: raw-archived {} messages", len(messages)
         )
@@ -839,10 +920,71 @@ DREAM_BATCH_DEDUP_MIN_CHARS = 200
 DREAM_LOG_NAME = "dream_log.jsonl"
 DREAM_LOG_MAX_BYTES = 1_000_000
 DREAM_LOG_KEEP_LINES = 500
+# Ingest hygiene (etap P0). Measured 2026-09-17 on the live journal: 38 of 138
+# entries came from heartbeat sessions and repeated their own status verbatim,
+# and 11 of 67 entries in Dream batches (16%) were near-duplicates.  The gate is
+# deterministic and reversible: `NANOBOT_HISTORY_HYGIENE=0` restores the old
+# ingest behaviour without touching the journal that is already written.
+HISTORY_HYGIENE_ENV = "NANOBOT_HISTORY_HYGIENE"
+# How far back an identical entry still counts as a repeat of the same content.
+HISTORY_DEDUP_WINDOW = 200
+# How many unprocessed entries one Dream view scans to find its candidates; a
+# window full of scheduled-session noise must not starve a run.
+DREAM_SCAN_WINDOW = 200
+# A journal entry whose whole content is one of these adds nothing to consolidate.
+_BOILERPLATE_PATTERNS = (
+    re.compile(r"^(?:all clear|nothing to report|nothing to consolidate|no changes|brak zmian|"
+               r"nic nowego|nic do zrobienia)\b", re.IGNORECASE),
+)
+_ENTRY_TAG = re.compile(r"^(?:-\s*)?\[(?:ephemeral|permanent|durable|correction)\]\s*", re.IGNORECASE)
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    """Read a boolean environment switch; anything unexpected keeps the default."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _content_hash(content: str) -> str:
+    """Hash of the whitespace- and case-insensitive content, for exact dedup."""
+    return hashlib.sha256(re.sub(r"\s+", " ", content.strip().lower()).encode()).hexdigest()
+
+
+def _is_boilerplate(content: str) -> bool:
+    """Whether an entry carries only a status marker and no consolidatable fact."""
+    stripped = _ENTRY_TAG.sub("", content.strip()).strip()
+    if not stripped:
+        return True
+    return any(pattern.match(stripped) for pattern in _BOILERPLATE_PATTERNS)
 _ARCHIVE_TOOL_RESULT = (
     "Session archival does not execute tools. Use only the supplied conversation and "
     "return the requested compact checkpoint now; do not call another tool."
 )
+
+
+def _dedupe_by_content_hash(
+    batch: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop exact repeats inside one batch, keeping the newest copy.
+
+    The trigram filter in :func:`dedupe_history_batch` catches restatements; this
+    one catches identical text the journal may still hold from before ingest
+    hygiene existed. The journal itself is never modified.
+    """
+    kept: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in reversed(batch):
+        digest = entry.get("content_hash")
+        if not isinstance(digest, str):
+            digest = _content_hash(str(entry.get("content", "")))
+        if digest in seen:
+            continue
+        seen.add(digest)
+        kept.append(entry)
+    kept.reverse()
+    return kept, len(batch) - len(kept)
 
 
 def _trigram_similarity(left: str, right: str) -> float:

@@ -121,7 +121,7 @@ class TestBuildDreamPrompt:
 
         assert result is not None
         prompt, last_cursor = result
-        assert "history cursors 1-20 (20 entries)" in prompt
+        assert "history cursors 1-20: 20 entries, 20 shown below" in prompt
         assert "5 further journal entries remain unprocessed" in prompt
         assert last_cursor == 20
         assert "entry 19" in prompt and "entry 20" not in prompt
