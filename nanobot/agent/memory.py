@@ -74,6 +74,9 @@ class MemoryStore:
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
         self.workspace = workspace
         self.archive_sink: Callable[[str, list[dict[str, Any]], str], str | None] | None = None
+        #: Called with (session_key, summary, messages) after a successful compaction, so
+        #: the curated layer can store a task episode instead of the whole transcript.
+        self.episode_sink: Callable[[str, str, list[dict[str, Any]]], object] | None = None
         self.max_history_entries = max_history_entries
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -1269,7 +1272,23 @@ class MemoryArchiver:
             return raw_fallback()
         if summary != "(nothing)":
             self.store.append_history(summary, session_key=session_key)
+            await self._record_episode(session_key, summary, source_messages)
         return summary
+
+    async def _record_episode(
+        self,
+        session_key: str,
+        summary: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Hand the compaction result to the episode sink; it never gates the archive."""
+        sink = self.store.episode_sink
+        if sink is None:
+            return
+        try:
+            await asyncio.to_thread(sink, session_key, summary, messages)
+        except Exception as exc:  # noqa: BLE001 - an episode is a projection, not the record
+            logger.warning("Episode record skipped ({})", type(exc).__name__)
 
     async def archive_session(
         self,
