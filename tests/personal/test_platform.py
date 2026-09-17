@@ -24,6 +24,7 @@ from nanobot.personal.maintenance import development_cycle
 from nanobot.personal.service import PersonalService
 from nanobot.personal.store import PersonalStore
 from nanobot.personal.vector import VectorMemory
+from nanobot.personal.visibility import QUARANTINE
 
 
 @pytest.fixture
@@ -323,7 +324,12 @@ def test_native_memory_is_augmented_and_keeps_earlier_versions(tmp_path):
     service.sync_workspace_memory()
     original.write_text("Current identity")
     service.sync_workspace_memory()
-    assert service.store.search("Earlier identity")
+    # Workspace-file copies are the quarantine layer: preserved and readable, never
+    # injected into a turn or returned by a normal search (corpus rule 2026-09-17).
+    assert service.store.search("Earlier identity") == []
+    earlier = service.store.search("Earlier identity", 5, visibilities=(QUARANTINE,))
+    assert {item["key"] for item in earlier} == {"SOUL.md"}
+    assert any("Earlier identity" in item["excerpt"] for item in earlier)
     assert original.read_text() == "Current identity"
     assert service.store.status()["documents"] == 2
 
@@ -650,17 +656,17 @@ def test_store_search_can_exclude_whole_source_layers(store):
     assert [item["source"] for item in kept] == ["mail:one"]
 
 
-def test_retrieval_scope_hides_evidence_sources_from_the_memory_layer(tmp_path):
+def test_retrieval_scope_adds_evidence_and_never_the_quarantine_layer(tmp_path):
     service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
-    service.store.put("mail:one", "INBOX:1:1", {
-        "headers": {"Subject": "Faktura"}, "body": "faktura za prąd 250 zł, termin 14 dni"})
-    service.store.put("native_memory", "memory/MEMORY.md", {
-        "content": "faktura za prąd 250 zł, termin 14 dni"})
-    service.store.put("session:telegram:1", "0", {
-        "role": "user", "content": "faktura za prąd 250 zł, termin 14 dni"})
+    body = "faktura za prąd 250 zł, termin 14 dni"
+    service.store.put("mail:one", "INBOX:1:1", {"headers": {"Subject": "Faktura"}, "body": body})
+    service.store.put("native_memory", "memory/MEMORY.md", {"content": body})
+    service.store.put("session:telegram:1", "0", {"role": "user", "content": body})
+    service.store.put("session:telegram:2", "0", {"role": "assistant", "content": body})
     assert [item["source"] for item in service.search("faktura prąd", 5)] == ["mail:one"]
     everything = service.search("faktura prąd", 5, scope="all")
-    assert {item["source"] for item in everything} == {"mail:one", "native_memory", "session:telegram:1"}
+    assert {item["source"] for item in everything} == {
+        "mail:one", "session:telegram:1", "session:telegram:2"}
 
 
 async def test_runtime_context_never_injects_evidence_sources(tmp_path):
