@@ -7,6 +7,10 @@
         "label": "Token bota",
         "placeholder": "123456:ABC..."
       },
+      "notifyToken": {
+        "label": "Token bota powiadomień",
+        "placeholder": "123456:ABC..."
+      },
       "proxy": {
         "label": "Serwer proxy",
         "placeholder": "http://127.0.0.1:7890"

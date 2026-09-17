@@ -7,6 +7,10 @@
         "label": "Jeton du bot",
         "placeholder": "123456:ABC..."
       },
+      "notifyToken": {
+        "label": "Jeton du bot de notifications",
+        "placeholder": "123456:ABC..."
+      },
       "proxy": {
         "label": "Proxy réseau",
         "placeholder": "http://127.0.0.1:7890"
