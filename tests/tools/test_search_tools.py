@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import os
 import re
 import threading
@@ -732,6 +733,43 @@ async def test_grep_uses_a_larger_bounded_limit_for_an_explicit_file(
     assert "needle" in explicit_result
     assert "skipped 1 large files" in directory_result
     assert "skipped 1 large files" in capped_result
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX named pipes")
+@pytest.mark.asyncio
+async def test_grep_skips_a_named_pipe_without_blocking(tmp_path: Path) -> None:
+    """A FIFO inside a scanned tree is skipped, never opened.
+
+    Opening a pipe that has no writer never returns, and the gateway runs tool
+    calls in the event-loop thread: such a pipe froze the whole service on
+    2026-09-17. The call therefore runs in a worker thread with a deadline, so a
+    regression fails here instead of hanging the test run.
+    """
+    os.mkfifo(tmp_path / "events.fifo")
+    (tmp_path / "notes.txt").write_text("needle here\n", encoding="utf-8")
+
+    tool = GrepTool(workspace=tmp_path, allowed_dir=tmp_path)
+    outcome: dict[str, str] = {}
+    finished = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome["result"] = asyncio.run(tool.execute(pattern="needle", path="."))
+        except Exception as exc:  # noqa: BLE001 - reported through the assertion below
+            outcome["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            finished.set()
+
+    context = contextvars.copy_context()
+    worker = threading.Thread(target=lambda: context.run(run), daemon=True)
+    worker.start()
+    if not await asyncio.to_thread(finished.wait, 10.0):
+        pytest.fail("grep blocked on a named pipe instead of skipping it")
+    if "error" in outcome:
+        pytest.fail(outcome["error"])
+
+    assert "notes.txt" in outcome["result"]
+    assert "skipped 1 non-regular files" in outcome["result"]
 
 
 def test_grep_schema_is_concise_and_hides_internal_limits(tmp_path: Path) -> None:

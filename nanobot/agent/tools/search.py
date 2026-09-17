@@ -9,13 +9,14 @@ import fnmatch
 import heapq
 import os
 import re
+import stat
 import threading
 import time
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Iterator, TypeVar
+from typing import IO, Any, Iterable, Iterator, TypeVar
 
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.filesystem import ListDirTool, _FsTool
@@ -135,6 +136,32 @@ def _is_binary(raw: bytes) -> bool:
         return False
     non_text = sum(byte < 9 or 13 < byte < 32 for byte in sample)
     return (non_text / len(sample)) > 0.2
+
+
+def _open_regular_file(path: Path) -> IO[bytes] | None:
+    """Open ``path`` for binary reading only when it is a regular file.
+
+    A plain ``open`` of a FIFO waits for a writer and never returns, so a stray
+    named pipe anywhere in a scanned tree blocks the caller forever. The gateway
+    runs tool calls in the event-loop thread, which froze the whole service on
+    2026-09-17. ``O_NONBLOCK`` makes the open of a pipe return immediately and
+    ``fstat`` rejects pipes, sockets and devices before anything is read;
+    regular files ignore ``O_NONBLOCK``, so their reads are unchanged, and
+    symlinks are still followed as before.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            return None
+    except OSError:
+        os.close(descriptor)
+        return None
+    return os.fdopen(descriptor, "rb")
 
 
 def _excel_column(index: int) -> str:
@@ -734,6 +761,7 @@ class GrepTool(_SearchTool):
             size_truncated = False
             skipped_binary = 0
             skipped_large = 0
+            skipped_non_regular = 0
             document_errors: list[str] = []
             document_continuations: list[str] = []
             matching_files: list[str] = []
@@ -753,17 +781,18 @@ class GrepTool(_SearchTool):
                 display_path = self._display_path(file_path, root)
 
                 try:
-                    file_size = file_path.stat().st_size
+                    file_stat = file_path.stat()
                 except OSError:
                     skipped_binary += 1
                     continue
+                if not stat.S_ISREG(file_stat.st_mode):
+                    skipped_non_regular += 1
+                    continue
+                file_size = file_stat.st_size
                 if file_size > max_file_bytes:
                     skipped_large += 1
                     continue
-                try:
-                    mtime = file_path.stat().st_mtime
-                except OSError:
-                    mtime = 0.0
+                mtime = file_stat.st_mtime
                 source_iterator: Iterator[LocatedDocumentLine] | None = None
                 is_document = file_path.suffix.lower() in _DOCUMENT_EXTENSIONS
                 try:
@@ -780,7 +809,11 @@ class GrepTool(_SearchTool):
                                 f"{source.continuation})"
                             )
                     else:
-                        with file_path.open("rb") as file:
+                        handle = _open_regular_file(file_path)
+                        if handle is None:
+                            skipped_binary += 1
+                            continue
+                        with handle as file:
                             raw = file.read(max_file_bytes + 1)
                         if _is_binary(raw):
                             skipped_binary += 1
@@ -912,6 +945,8 @@ class GrepTool(_SearchTool):
                 notes.append(f"(skipped {skipped_binary} binary/unreadable files)")
             if skipped_large:
                 notes.append(f"(skipped {skipped_large} large files)")
+            if skipped_non_regular:
+                notes.append(f"(skipped {skipped_non_regular} non-regular files)")
             if document_errors:
                 notes.append(f"(first document error: {document_errors[0]})")
             notes.extend(document_continuations[:10])
