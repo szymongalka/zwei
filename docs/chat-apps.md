@@ -166,6 +166,14 @@ If the gateway cannot reach Telegram directly, add a proxy to the same section:
 HTTP, HTTPS, SOCKS5, and SOCKS5H proxy URLs are accepted. Treat a proxy URL
 containing a username or password as a secret.
 
+> `notifyToken` is an optional second bot token used **only for outbound automation
+> notifications** — cron results, heartbeat checks, and message-tool sends that carry no
+> buttons. Leave it unset and everything is delivered by the conversation bot (upstream
+> behavior). When it is set, those notifications come from the notification bot while
+> replies, menus, and inline buttons stay on the main bot. Set it in
+> **Settings → Channels → Telegram** (Advanced) or as `channels.telegram.notifyToken`.
+> It is a secret: it stays masked in the WebUI and never appears in reports.
+
 > You can find your **User ID** in Telegram settings. It is shown as `@yourUserId`. Copy this value **without the `@` symbol** and paste it into the config file.
 >
 > `richMessages` defaults to `false`. Set it to `true` only if your Telegram client supports Bot API 10.1 rich messages and you want richer markdown rendering; keep it disabled for Telegram Web, which may show unsupported-message errors for rich messages.

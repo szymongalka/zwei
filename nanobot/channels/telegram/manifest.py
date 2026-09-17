@@ -8,6 +8,9 @@ from nanobot.channels.telegram.validation import validate
 SETUP_SPEC = ChannelSetupSpec(
     fields={
         "token": field("secret"),
+        # Optional second bot token used only for outbound automation
+        # notifications (see TelegramConfig.notify_token).
+        "notifyToken": field("secret"),
         "proxy": field(),
         "allowFrom": field("list"),
         "groupPolicy": field("enum", choices=GROUP_POLICIES, default="mention"),

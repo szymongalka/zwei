@@ -466,10 +466,17 @@ def _load_model_menu_data(workspace: Path | str | None) -> dict[str, Any] | None
     if workspace is None:
         return None
     try:
-        raw = json.loads((Path(workspace) / MODEL_MENU_DATA_FILENAME).read_text(encoding="utf-8"))
+        loaded = json.loads(
+            (Path(workspace) / MODEL_MENU_DATA_FILENAME).read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return None
-    providers = raw.get("providers") if isinstance(raw, dict) else None
+    if not isinstance(loaded, dict):
+        return None
+    # ``json.loads`` returns ``Any``; cast the validated descriptor so the strict
+    # type check can follow the keys read below.
+    raw = cast(dict[str, Any], loaded)
+    providers = raw.get("providers")
     if not isinstance(providers, dict) or not providers:
         return None
     return raw
