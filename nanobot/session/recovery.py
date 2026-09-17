@@ -36,6 +36,14 @@ from nanobot.webui.session_identity import webui_chat_id, webui_session_key
 # uncertain tool state (``awaiting_tools``) is never resumed automatically.
 AUTO_RESUME_PHASES = frozenset({"tools_completed", "error"})
 AUTO_RESUME_REASON = "auto_resume_after_restart"
+# Channels that own their own retry policy or have no one left to answer to.
+# Scheduler drivers (cron, heartbeat, Dream, the development worker) would
+# duplicate work they re-run on their own schedule, and a detached terminal or
+# browser has its own explicit flow.
+AUTO_RESUME_EXCLUDED_CHANNELS = frozenset({
+    "websocket", "cli", "cron", "heartbeat", "dream", "personal-development",
+    "personal-evolution", "subagent",
+})
 RESTART_JOURNAL_NAME = "restart-resume.jsonl"
 RESTART_JOURNAL_MAX_BYTES = 1_000_000
 RESTART_JOURNAL_KEEP_LINES = 500
@@ -596,14 +604,14 @@ class RecoveryCoordinator:
         session_key: str,
         metadata: Mapping[str, Any],
     ) -> tuple[str, str] | None:
-        """Delivery route of a channel-driven session, or ``None`` for the WebUI ones."""
+        """Delivery route of a conversation session, or ``None`` for the excluded ones."""
         if webui_chat_id(session_key) is not None or session_key == UNIFIED_SESSION_KEY:
             route = last_channel_from_metadata(metadata)
-            if route is None or route[0] in {"websocket", "cli"}:
+            if route is None or route[0] in AUTO_RESUME_EXCLUDED_CHANNELS:
                 return None
             return route
         channel, _, chat_id = session_key.partition(":")
-        if not channel or not chat_id or channel in {"websocket", "cli"}:
+        if not channel or not chat_id or channel in AUTO_RESUME_EXCLUDED_CHANNELS:
             return None
         return channel, chat_id
 
