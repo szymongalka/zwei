@@ -38,6 +38,8 @@ async def development_cycle(service: PersonalService, agent: AgentLoop) -> None:
             base += "\n\nWorkspace-specific scope:\n" + override.read_text(encoding="utf-8")
         try:
             outcome = DevelopmentOutcome()
+            # Keep this session key outside the "user" source: the agent loop gives a "user"
+            # turn the small interactive tool budget, which cuts a background cycle short.
             response = await asyncio.wait_for(agent.process_direct(
                 base, session_key="personal-development:" + service.store.namespace,
                 channel="cli", chat_id="personal-development", hooks=[outcome],
