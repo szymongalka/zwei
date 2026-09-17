@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.personal.store import readable_excerpt
 
@@ -164,7 +164,12 @@ def refresh_calendar_projections(store: PersonalStore, source: str, limit: int =
     refreshed = 0
     for identifier in store.projection_candidates(source, RAW_ICS_MARKER, limit):
         payload = store.get(identifier)["payload"]
-        content = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        # The archived payload is JSON-shaped; cast it so the strict type check
+        # can follow the key read below.
+        fields = cast("dict[str, Any]", payload)
+        content = fields.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
         store.set_projection(identifier, event_projection(content))
