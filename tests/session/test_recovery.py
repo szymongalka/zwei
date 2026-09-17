@@ -159,6 +159,25 @@ async def test_restart_resume_can_be_disabled(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_scheduler_driven_sessions_are_not_resumed(tmp_path: Path) -> None:
+    """Cron, heartbeat and worker sessions own their retry policy; no duplicate work."""
+    sessions = SessionManager(tmp_path)
+    for key in (
+        "heartbeat",
+        "dream:20260917-000000",
+        "personal-development:abc",
+        "cli:direct",
+    ):
+        _interrupted_channel_session(sessions, key=key)
+    coordinator, bus, _ = _coordinator(tmp_path, auto_resume=True)
+
+    decisions = await coordinator.resume_after_restart()
+
+    assert decisions == []
+    assert bus.inbound.empty()
+
+
+@pytest.mark.asyncio
 async def test_restart_resume_leaves_webui_sessions_to_their_own_flow(tmp_path: Path) -> None:
     sessions = SessionManager(tmp_path)
     _interrupted_channel_session(sessions, key="websocket:chat")
