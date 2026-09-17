@@ -4,6 +4,7 @@ import asyncio
 import base64
 import gzip
 import json
+import os
 import sqlite3
 import time
 from types import SimpleNamespace
@@ -50,6 +51,12 @@ def test_accounts_are_encrypted_and_secret_edits_preserve_password(tmp_path):
     assert b"private-test-password" not in service.store.path.read_bytes()
     service.save_account({**account().model_dump(), "password": ""})
     assert service.store.account("one").password.get_secret_value() == "private-test-password"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX file modes")
+def test_account_store_and_key_are_private(tmp_path):
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    service.save_account(account().model_dump())
     assert service.store.path.stat().st_mode & 0o777 == 0o600
     assert service.store.key_path.stat().st_mode & 0o777 == 0o600
 
