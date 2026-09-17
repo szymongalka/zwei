@@ -5,7 +5,7 @@ import { WebSocketIcon } from "./WebSocketIcon";
 
 export default {
   presentation: {
-    displayName: "nanobot WebUI",
+    displayName: "Zwei WebUI",
     initials: "WS",
     color: "#111827",
     icon: WebSocketIcon,

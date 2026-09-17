@@ -38,7 +38,7 @@ INTERNAL_CHANNEL_FIELDS = {
     "signal": {"allowFrom"},
     "weixin": {"token"},
     "whatsapp": {"databasePath", "lidMappings"},
-    # nanobot WebUI owns this transport and intentionally has no channel dialog.
+    # The Zwei WebUI owns this transport and intentionally has no channel dialog.
     "websocket": {
         "allowFrom",
         "host",
