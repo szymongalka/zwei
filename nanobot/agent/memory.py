@@ -17,7 +17,7 @@ import weakref
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, cast
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -28,6 +28,16 @@ from nanobot.agent.context_budget import (
     StaticContext,
     budget_enforced,
     measure,
+)
+from nanobot.agent.memory_gate import (
+    TARGET_LIMITS,
+    Candidate,
+    WriteOutcome,
+    apply_decisions,
+    collect_candidates,
+    fallback_entries,
+    parse_decisions,
+    render_candidates,
 )
 from nanobot.agent.memory_notes import append_day_note
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
@@ -99,10 +109,15 @@ class MemoryStore:
         self._oversize_logged = False  # rate-limit oversized-entry warning
         self._dream_prompt_oversize_logged = False
         self._last_dream_batch: dict[str, Any] | None = None
+        self._last_dream_candidates: list[Candidate] = []
+        self._last_dream_baseline: dict[str, str] = {}
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
         # Ingest hygiene is on by default; the environment switch is the rollback
         # lever, because the journal has no configuration section of its own.
         self.history_hygiene = _env_flag(HISTORY_HYGIENE_ENV, default=True)
+        # Dream mode: "legacy" lets the model rewrite the files, "gated" makes the
+        # model return decisions that a deterministic writer applies.
+        self.dream_mode = _dream_mode_from_env()
         self._git = GitStore(workspace, tracked_files=[
             "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
         ])
@@ -608,7 +623,8 @@ class MemoryStore:
 
     @property
     def dream_prompt_file(self) -> Path:
-        return workspace_prompt_file(self.workspace, "dream")
+        name = "dream_gated" if self.dream_mode == "gated" else "dream"
+        return workspace_prompt_file(self.workspace, name)
 
     def has_dream_prompt_override(self) -> bool:
         return has_workspace_prompt_override(self.dream_prompt_file)
@@ -622,6 +638,15 @@ class MemoryStore:
             strip=True,
             skill_creator_path=str(BUILTIN_SKILLS_DIR / "skill-creator" / "SKILL.md"),
         )
+
+    @staticmethod
+    def default_gated_dream_prompt() -> str:
+        """The decision contract used when Dream runs in gated mode."""
+        return render_template("agent/dream_gated.md", strip=True)
+
+    def _default_dream_template(self) -> str:
+        return (self.default_gated_dream_prompt() if self.dream_mode == "gated"
+                else self.default_dream_prompt())
 
     def _dream_template(self) -> str:
         text, original_chars = load_workspace_prompt_override(self.dream_prompt_file)
@@ -637,7 +662,7 @@ class MemoryStore:
                     WORKSPACE_PROMPT_MAX_CHARS, original_chars,
                 )
             return text
-        return self.default_dream_prompt()
+        return self._default_dream_template()
 
     def build_dream_prompt(self, *, max_entries: int = 20) -> tuple[str, int] | None:
         """Build the Dream prompt with unprocessed history context.
@@ -647,6 +672,8 @@ class MemoryStore:
         The current contents of the durable memory files (SOUL.md, USER.md,
         memory/MEMORY.md) reach Dream through the normal agent system context.
         """
+        if self.dream_mode == "gated":
+            return self._build_gated_dream_prompt(max_entries=max_entries)
         last_cursor = self.get_last_dream_cursor()
         entries = self.read_unprocessed_history(since_cursor=last_cursor)
         if not entries:
@@ -732,6 +759,173 @@ class MemoryStore:
         )
         return "\n".join(lines)
 
+    # -- gated mode (P2) ------------------------------------------------------
+
+    def _build_gated_dream_prompt(self, *, max_entries: int) -> tuple[str, int] | None:
+        """Offer the gate's candidates and ask for decisions instead of prose."""
+        last_cursor = self.get_last_dream_cursor()
+        entries = self.read_unprocessed_history(since_cursor=last_cursor)
+        if not entries:
+            return None
+        window = entries[: max(DREAM_SCAN_WINDOW, max_entries)]
+        eligible = [entry for entry in window
+                    if not self.history_hygiene or is_candidate(entry.get("session_key"))]
+        candidates, rejected = collect_candidates(eligible)
+        if not candidates:
+            logger.info(
+                "Dream (gated): {} entries, none passed the promotion gate ({})",
+                len(window), rejected,
+            )
+            return None
+        batch = candidates[:max_entries]
+        covered = max(candidate.cursor for candidate in batch)
+        remaining = sum(1 for entry in entries if int(entry.get("cursor", 0)) > covered)
+        reasons = ", ".join(f"{name} {count}" for name, count in sorted(rejected.items())) or "none"
+        header = "\n".join([
+            "## Promotion gate",
+            f"- {len(candidates)} of {len(window)} considered entries passed the gate; rejected: {reasons}.",
+            f"- This run covers cursors {min(c.cursor for c in batch)}-{covered} "
+            f"({len(batch)} candidates shown below).",
+            f"- {remaining} further journal entries remain unprocessed; they arrive in a later run.",
+            "- Return decisions for these candidates only.",
+        ])
+        prompt = "\n\n".join([self._dream_template(), header,
+                               "## Candidates\n" + render_candidates(batch)])
+        self._last_dream_batch = {
+            "entries": len(window),
+            "shown": len(batch),
+            "duplicates": rejected.get("duplicate", 0),
+            "excluded": len(window) - len(eligible),
+            "repeats": 0,
+            "first_cursor": min(candidate.cursor for candidate in batch),
+            "last_cursor": covered,
+            "remaining": remaining,
+        }
+        self._last_dream_candidates = batch
+        # Optimistic concurrency: the writer refuses to build on a file that changed
+        # while the model was thinking.
+        self._last_dream_baseline = {name: _content_digest(self._read_durable(name))
+                                     for name in TARGET_LIMITS}
+        return (prompt, covered)
+
+    def _durable_paths(self) -> dict[str, Path]:
+        return {"MEMORY.md": self.memory_file, "USER.md": self.user_file}
+
+    def _read_durable(self, name: str) -> str:
+        path = self._durable_paths()[name]
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def _write_durable(self, name: str, content: str) -> None:
+        if name == "MEMORY.md":
+            self.write_memory(content)
+        else:
+            self.write_user(content)
+
+    def _pre_image(self, name: str) -> str | None:
+        """Keep the previous content of a durable file before a gated write."""
+        path = self._durable_paths()[name]
+        if not path.is_file():
+            return None
+        directory = ensure_dir(self.memory_dir / "pre-image")
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = directory / f"{path.name}.{stamp}"
+        try:
+            target.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Dream pre-image not written ({}): {}", type(exc).__name__, target)
+            return None
+        for stale in sorted(directory.glob(f"{path.name}.*"))[:-20]:
+            with suppress(OSError):
+                stale.unlink()
+        return str(target)
+
+    def apply_dream_result(self, response: object | None, cursor: int) -> dict[str, Any] | None:
+        """Apply a gated Dream answer; a no-op while Dream runs in legacy mode.
+
+        The model's answer is a decision document, not prose: the writer validates it,
+        keeps every existing entry, writes the durable files atomically and records the
+        run in ``memory/DREAMS.md``.  An unparsable answer falls back to a deterministic
+        append-only promotion, so a provider failure cannot freeze memory.
+        """
+        if self.dream_mode != "gated":
+            return None
+        text = getattr(response, "content", "") or ""
+        decisions, problems = parse_decisions(text)
+        contents = {name: self._read_durable(name) for name in TARGET_LIMITS}
+        report: dict[str, Any] = {"mode": "gated", "cursors": cursor,
+                                  "problems": problems, "fallback": False}
+        if decisions is None:
+            report["fallback"] = True
+            report["reason"] = problems[0] if problems else "unparsable answer"
+            outcome = self._fallback_promotion(contents)
+        elif self._durable_drifted(contents):
+            # A hand edit or another session touched the files mid-run: promote
+            # append-only instead of writing on top of unknown content.
+            report["fallback"] = True
+            report["reason"] = "durable files changed during the run"
+            outcome = self._fallback_promotion(contents)
+        else:
+            outcome = apply_decisions(contents, decisions, today=datetime.now().strftime("%Y-%m-%d"))
+        report["counts"] = outcome.counts()
+        report["rejections"] = [f"{decision.op}: {reason}" for decision, reason in outcome.rejected]
+        written: list[str] = []
+        for name, content in outcome.contents.items():
+            if content == contents.get(name, ""):
+                continue
+            self._pre_image(name)
+            try:
+                self._write_durable(name, content)
+            except ValueError as exc:
+                report["rejections"].append(f"{name}: {exc}")
+                continue
+            written.append(name)
+        report["written"] = written
+        self._record_dreams_entry(report)
+        return report
+
+    def _durable_drifted(self, contents: Mapping[str, str]) -> bool:
+        """Whether a durable file changed since the prompt was built."""
+        baseline = self._last_dream_baseline
+        if not baseline:
+            return False
+        return any(baseline.get(name) != _content_digest(contents.get(name, ""))
+                   for name in TARGET_LIMITS)
+
+    def _fallback_promotion(self, contents: Mapping[str, str]) -> WriteOutcome:
+        """Promote the gate's best candidates without a model, append-only."""
+        entries = fallback_entries(self._last_dream_candidates)
+        outcome = WriteOutcome(contents=dict(contents))
+        if not entries:
+            return outcome
+        current = contents.get("MEMORY.md", "").rstrip()
+        outcome.contents["MEMORY.md"] = (current + "\n\n" if current else "") + "\n".join(entries) + "\n"
+        outcome.applied.extend(f"fallback {name}" for name in ["MEMORY.md"])
+        return outcome
+
+    def _record_dreams_entry(self, report: Mapping[str, Any]) -> None:
+        """Append the run to the readable Dream journal; counters only, no content."""
+        counts = cast(Mapping[str, int], report.get("counts", {}))
+        lines = [
+            f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M')} ({report.get('mode', 'gated')})",
+            f"- decisions: {counts.get('applied', 0)} applied, {counts.get('rejected', 0)} rejected",
+        ]
+        for key in sorted(counts):
+            if key.startswith("rejected_"):
+                lines.append(f"- {key.removeprefix('rejected_')}: {counts[key]}")
+        lines.append(f"- files written: {', '.join(cast(list[str], report.get('written', []))) or 'none'}")
+        if report.get("fallback"):
+            lines.append(f"- fallback append-only: {report.get('reason', 'unknown')}")
+        for problem in cast(list[str], report.get("problems", []))[:5]:
+            lines.append(f"- problem: {problem}")
+        for rejection in cast(list[str], report.get("rejections", []))[:10]:
+            lines.append(f"- rejected: {rejection}")
+        path = self.memory_dir / DREAMS_LOG_NAME
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except OSError:
+            logger.warning("Dream journal is not writable: {}", path)
+
     def record_dream_run(
         self,
         *,
@@ -804,6 +998,10 @@ class MemoryStore:
             extra_read_allowed_dirs=extra_read,
             file_states=file_states,
         ))
+        if self.dream_mode == "gated":
+            # In gated mode the deterministic writer owns the durable files, so the
+            # model reads them but cannot change them.
+            return tools
         tools.register(EditFileTool(
             workspace=workspace,
             allowed_dir=skills_dir,
@@ -973,12 +1171,21 @@ DREAM_BATCH_DEDUP_MIN_CHARS = 200
 DREAM_LOG_NAME = "dream_log.jsonl"
 DREAM_LOG_MAX_BYTES = 1_000_000
 DREAM_LOG_KEEP_LINES = 500
+# Readable journal of gated Dream runs: what was added, merged, superseded and
+# rejected, with counters only - never the rejected content.
+DREAMS_LOG_NAME = "DREAMS.md"
 # Ingest hygiene (etap P0). Measured 2026-09-17 on the live journal: 38 of 138
 # entries came from heartbeat sessions and repeated their own status verbatim,
 # and 11 of 67 entries in Dream batches (16%) were near-duplicates.  The gate is
 # deterministic and reversible: `NANOBOT_HISTORY_HYGIENE=0` restores the old
 # ingest behaviour without touching the journal that is already written.
 HISTORY_HYGIENE_ENV = "NANOBOT_HISTORY_HYGIENE"
+# Dream mode switch (etap P2). "legacy" keeps the model as the author of the
+# durable files; "gated" makes it return decisions that the deterministic writer
+# applies. The gateway sets the attribute from `agents.defaults.dream.mode`; the
+# environment variable is the rollback lever for every other entry point.
+DREAM_MODE_ENV = "NANOBOT_DREAM_MODE"
+DREAM_MODES = ("legacy", "gated")
 # How far back an identical entry still counts as a repeat of the same content.
 HISTORY_DEDUP_WINDOW = 200
 # How many unprocessed entries one Dream view scans to find its candidates; a
@@ -998,6 +1205,17 @@ def _env_flag(name: str, *, default: bool) -> bool:
     if raw is None or not raw.strip():
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _content_digest(content: str) -> str:
+    """Digest of a durable file's content, for optimistic concurrency."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _dream_mode_from_env() -> str:
+    """Dream mode from the environment; the config value is applied by the runner."""
+    value = os.environ.get(DREAM_MODE_ENV, "").strip().lower()
+    return value if value in DREAM_MODES else "legacy"
 
 
 def _content_hash(content: str) -> str:

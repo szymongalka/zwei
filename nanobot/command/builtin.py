@@ -657,6 +657,8 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
                 runtime=dream_runtime,
             )
             elapsed = time.monotonic() - t0
+            # Gated mode: the model returned decisions, the writer applies them.
+            store.apply_dream_result(resp, last_cursor)
             # The real file delta grounds the audit record; normal completion
             # decides whether this history batch has finished processing.
             diff_body = store.dream_content_diff()

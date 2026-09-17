@@ -50,6 +50,10 @@ class _FakeStore:
     def dream_content_diff(self) -> str:
         return self._content_diff
 
+    def apply_dream_result(self, response: object | None, cursor: int) -> None:
+        """Legacy-mode no-op, mirroring ``MemoryStore.apply_dream_result``."""
+        return None
+
     def compact_history(self) -> None:
         self.compact_history_called = True
 
