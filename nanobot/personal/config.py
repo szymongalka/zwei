@@ -26,6 +26,9 @@ class PersonalConfig(Base):
     retrieval_anchor_strong_similarity: float = Field(default=0.72, ge=0.0, le=1.0)
     retrieval_max_per_source: int = Field(default=2, ge=1, le=8)
     retrieval_stats_enabled: bool = True
+    # `used` loop: score every injected record against the answer it produced and
+    # journal the signal for the promotion gate. Read-only w.r.t. the archive.
+    retrieval_used_tracking: bool = True
     # Retrieval scope: "memory" is the curated layer, "all" adds the evidence sources
     # (session transcripts, workspace-file snapshots) that are not memory.
     retrieval_scope: Literal["memory", "all"] = "memory"
