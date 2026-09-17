@@ -13,6 +13,34 @@ Store each fact in one canonical location; merge duplicates and overlapping sect
 
 Write atomic facts and user-validated approaches, such as "has a cat named Luna", rather than descriptions like "discussed pet care".
 
+## Budget and notes
+
+`AGENTS.md`, `SOUL.md`, `USER.md` and `memory/MEMORY.md` are injected on every turn and share a
+ceiling of 24000 bytes. On top of that, `USER.md` holds directives only and stays under 4000
+characters, and `memory/MEMORY.md` is an index that stays under 12000 characters.
+
+- Keep one line per topic in `memory/MEMORY.md`: what it is, plus the pointer to `memory/notes/<topic>.md`.
+- Put detail, commands, endpoints, runbooks and history into that note, never into the index.
+- `memory/notes/<YYYY-MM-DD>.md` is the day's trail; leave it alone unless a fact there is wrong.
+- A write that would grow an over-limit file is refused. Consolidate in the same turn: move the
+  detail into a note, keep the index line, then write the file again.
+
+## Entry provenance
+
+An entry that must stay current carries its provenance in an HTML comment on the line above it:
+
+```md
+- The gateway needs the `personal` section in config.json; a bare main crashes on start.
+  <!-- observed: 2026-09-15 | source: memory/EVOLUTION.md | importance: 9 -->
+```
+
+- `observed` is the date the fact was established; it is mandatory for a fact that changes.
+- `source` is a path, a session or an evidence artefact; an entry without one does not belong in memory.
+- `importance` is 1-10, judged once when the entry is written.
+- `trigger: <phrase>` (up to three) marks an entry that should surface when that topic comes up.
+- A fact that changes is superseded in place: keep the previous line marked `superseded` instead of
+  appending a second, contradicting line.
+
 ## History attribute tags
 
 Use these retention rules for both new history and existing memory. Tags are routing hints:

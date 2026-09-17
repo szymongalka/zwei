@@ -15,6 +15,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from nanobot.agent.hook import AgentHook, AgentRunHookContext, AgentTurnHookContext
+from nanobot.agent.memory_notes import append_day_note
 from nanobot.agent.tools.context import RequestContext
 from nanobot.personal.config import Account, PersonalConfig
 from nanobot.personal.connectors import dav_sync, mailbox_sync, send_mail, test_account
@@ -143,6 +144,21 @@ RetrievalScope = Literal["memory", "all"]
 def source_is_excluded(source: str, prefixes: Sequence[str]) -> bool:
     """Whether a record belongs to a layer the current retrieval scope keeps out."""
     return any(source.startswith(prefix) for prefix in prefixes)
+
+
+def _record_day_note(workspace: Path, session_key: str, episode: Mapping[str, Any]) -> None:
+    """One line in today's note pointing at the episode; never gates the archive.
+
+    The note is the readable trail of the day; the episode carries the content, so
+    the line only says what the session was about and where to look.
+    """
+    headline = str(episode.get("outcome") or episode.get("what") or "").strip()
+    if not headline:
+        return
+    try:
+        append_day_note(workspace, f"[{session_key}] {headline[:160]}")
+    except OSError:
+        logger.debug("Day note is not writable under {}", workspace / "memory" / "notes")
 
 
 class PersonalAction(BaseModel):
@@ -404,7 +420,9 @@ class PersonalService:
         key = episode_key(episode)
         if self.store.has_record(source, key):
             return None
-        return self.store.put(source, key, episode, text=episode_projection(episode))
+        identifier = self.store.put(source, key, episode, text=episode_projection(episode))
+        _record_day_note(self.workspace, session_key, episode)
+        return identifier
 
     def action(self, request: PersonalAction) -> object:
         if request.action == "status":
