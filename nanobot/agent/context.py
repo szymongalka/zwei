@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
+from nanobot.agent.context_budget import FILE_LIMITS, budget_enforced, truncate_copy
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 from nanobot.agent.tools import image_generation as image_generation_tools
@@ -148,7 +149,7 @@ class ContextBuilder:
         if include_memory:
             memory = self.memory.read_memory()
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
-                parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
+                parts.append(f"# Memory\n\n## Long-term Memory\n{self._bounded('memory/MEMORY.md', memory)}")
 
         active_skills = self.skills.get_always_skills()
         if active_skills:
@@ -237,9 +238,17 @@ class ContextBuilder:
                     content, filename
                 ):
                     continue
-                parts.append(f"## {filename}\n\n{content}")
+                parts.append(f"## {filename}\n\n{self._bounded(filename, content)}")
 
         return "\n\n".join(parts) if parts else ""
+
+    @staticmethod
+    def _bounded(path: str, content: str) -> str:
+        """Cut the prompt copy of an over-limit file; the file on disk is untouched."""
+        limit = FILE_LIMITS.get(path)
+        if limit is None or not budget_enforced():
+            return content
+        return truncate_copy(content, limit, path)
 
     @staticmethod
     def _is_template_content(content: str, template_path: str) -> bool:

@@ -22,6 +22,14 @@ from uuid import uuid4
 
 from loguru import logger
 
+from nanobot.agent.context_budget import (
+    MEMORY_LIMIT_CHARS,
+    USER_LIMIT_CHARS,
+    StaticContext,
+    budget_enforced,
+    measure,
+)
+from nanobot.agent.memory_notes import append_day_note
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMResponse, ProviderConversationState
@@ -240,6 +248,7 @@ class MemoryStore:
         return self.read_file(self.memory_file)
 
     def write_memory(self, content: str) -> None:
+        self._check_budget(self.memory_file, content, MEMORY_LIMIT_CHARS)
         self.memory_file.write_text(content, encoding="utf-8")
 
     # -- SOUL.md -------------------------------------------------------------
@@ -256,6 +265,7 @@ class MemoryStore:
         return self.read_file(self.user_file)
 
     def write_user(self, content: str) -> None:
+        self._check_budget(self.user_file, content, USER_LIMIT_CHARS)
         self.user_file.write_text(content, encoding="utf-8")
 
     # -- context injection (used by context.py) ------------------------------
@@ -263,6 +273,46 @@ class MemoryStore:
     def get_memory_context(self) -> str:
         long_term = self.read_memory()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
+
+    def static_context(self) -> StaticContext:
+        """Measure the files that are injected on every turn."""
+        return measure(self.workspace)
+
+    def flush_day_note(self, session_key: str, *, first_cursor: int, last_cursor: int,
+                       entries: int, characters: int) -> Path | None:
+        """Record a session boundary in today's note; it never gates the archive.
+
+        The note is the readable trail of the day; the content of what happened
+        lives in the journal entry and in the episode that the same boundary
+        produced, so this line only has to say where to look.
+        """
+        span = (f"journal cursors {first_cursor}-{last_cursor}"
+                if first_cursor and last_cursor else f"{entries} messages")
+        try:
+            return append_day_note(self.workspace, f"[{session_key}] {span} ({characters} chars)")
+        except OSError:
+            logger.warning("Day note is not writable under {}", self.memory_dir / "notes")
+            return None
+
+    def _check_budget(self, path: Path, content: str, limit: int) -> None:
+        """Refuse a write that grows an over-limit file without consolidating it.
+
+        A write that shrinks the file is always allowed, even while the file is
+        still over its limit: a consolidation in progress must not be blocked by
+        the rule that exists to force it. The refusal message carries what the
+        writer needs to fix it in the same turn instead of guessing.
+        """
+        if not budget_enforced() or len(content) <= limit:
+            return
+        current = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if len(content) < len(current):
+            return
+        headings = [line.strip() for line in current.splitlines() if line.startswith("#")]
+        raise ValueError(
+            f"{path.name} would hold {len(content)} characters; the limit is {limit}. "
+            "Move the details into memory/notes/<topic>.md and keep one index line per topic "
+            "instead of growing this file. Current sections: " + ", ".join(headings[:12]) + "."
+        )
 
     # -- history.jsonl — append-only, JSONL format ---------------------------
 
@@ -1122,7 +1172,7 @@ class MemoryArchiver:
             await asyncio.to_thread(self.store.archive_sink, session_key, source_messages, "pre-compaction")
 
         def raw_fallback() -> str:
-            return self._raw_checkpoint(
+            checkpoint = self._raw_checkpoint(
                 source_messages,
                 session_key=session_key,
                 previous_summary=previous_summary,
@@ -1132,6 +1182,10 @@ class MemoryArchiver:
                     else runtime.generation.max_tokens
                 ),
             )
+            self.store.flush_day_note(session_key, first_cursor=0, last_cursor=0,
+                                      entries=len(source_messages),
+                                      characters=len(checkpoint))
+            return checkpoint
 
         prompt = render_template(
             "agent/consolidator_archive.md",
@@ -1271,7 +1325,10 @@ class MemoryArchiver:
             logger.warning("Memory archive provider summary was not safe to replay, raw-dumping")
             return raw_fallback()
         if summary != "(nothing)":
-            self.store.append_history(summary, session_key=session_key)
+            first_cursor = self.store.append_history(summary, session_key=session_key)
+            self.store.flush_day_note(session_key, first_cursor=first_cursor,
+                                      last_cursor=first_cursor, entries=1,
+                                      characters=len(summary))
             await self._record_episode(session_key, summary, source_messages)
         return summary
 

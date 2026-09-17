@@ -111,6 +111,27 @@ def test_compaction_is_repeatable_and_does_not_duplicate_evidence(store):
     assert store.status()["evidence_documents"] == 5
 
 
+def test_episode_records_a_line_in_todays_note(tmp_path):
+    from nanobot.agent.memory_notes import day_note_path
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    identifier = service.record_episode(
+        "telegram:1", "Wynik: brama wstała po restarcie",
+        [{"role": "user", "content": "zrob deploy"}])
+    assert identifier
+    note = day_note_path(tmp_path)
+    assert note.is_file()
+    text = note.read_text(encoding="utf-8")
+    assert "[telegram:1]" in text and "brama wstała" in text
+
+
+def test_background_session_records_no_day_note(tmp_path):
+    from nanobot.agent.memory_notes import day_note_path
+    service = PersonalService(PersonalConfig(data_dir=str(tmp_path / "data")), tmp_path)
+    assert service.record_episode("heartbeat", "Kontrola bez zmian",
+                                  [{"role": "user", "content": "x"}]) is None
+    assert not day_note_path(tmp_path).exists()
+
+
 def test_plan_writes_nothing(store):
     seed(store)
     before = store.path.read_bytes()
