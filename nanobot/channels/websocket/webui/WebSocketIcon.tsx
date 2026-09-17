@@ -1,5 +1,9 @@
+/**
+ * Mark of the WebUI channel row: the fork app icon, which is transparent and
+ * therefore sits on the badge background in either appearance palette.
+ */
 export function WebSocketIcon() {
   return (
-    <img src="/brand/nanobot_mark.svg" alt="" className="h-6 w-6 object-contain" draggable={false} />
+    <img src="/brand/zwei.svg" alt="" className="h-8 w-8 object-contain" draggable={false} />
   );
 }

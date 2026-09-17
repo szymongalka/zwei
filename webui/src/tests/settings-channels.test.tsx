@@ -2029,10 +2029,10 @@ describe("Settings channels", () => {
 
     renderSettingsView({ initialSection: "channels" });
 
-    const websocketName = await screen.findByText("nanobot WebUI");
+    const websocketName = await screen.findByText("Zwei WebUI");
     fireEvent.click(websocketName);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    const websocketSwitch = screen.getByRole("switch", { name: "nanobot WebUI channel" });
+    const websocketSwitch = screen.getByRole("switch", { name: "Zwei WebUI channel" });
     expect(websocketSwitch).toBeDisabled();
     expect(websocketSwitch).toHaveAttribute("aria-checked", "true");
     expect(requestMutationMock).not.toHaveBeenCalled();
