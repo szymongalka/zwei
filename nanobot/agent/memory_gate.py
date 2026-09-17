@@ -21,7 +21,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 #: An entry that reaches durable memory is short: the plan caps a promoted snippet
 #: at 160 tokens, which is roughly this many characters.
@@ -242,26 +242,30 @@ def parse_decisions(text: str) -> tuple[list[Decision] | None, list[str]]:
         parsed: Any = json.loads(payload)
     except ValueError as exc:
         return None, [f"invalid JSON ({type(exc).__name__})"]
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("decisions"), list):
+    if not isinstance(parsed, dict):
+        return None, ["missing 'decisions' list"]
+    document = cast(dict[str, Any], parsed)
+    if not isinstance(document.get("decisions"), list):
         return None, ["missing 'decisions' list"]
 
     decisions: list[Decision] = []
     problems: list[str] = []
-    for index, raw in enumerate(parsed["decisions"]):
+    for index, raw in enumerate(cast(list[Any], document["decisions"])):
         if not isinstance(raw, dict):
             problems.append(f"decision {index}: not an object")
             continue
-        op = str(raw.get("op", "")).strip().lower()
-        target = str(raw.get("target", "MEMORY.md")).strip() or "MEMORY.md"
+        item = cast(dict[str, Any], raw)
+        op = str(item.get("op", "")).strip().lower()
+        target = str(item.get("target", "MEMORY.md")).strip() or "MEMORY.md"
         if op not in OPS:
             problems.append(f"decision {index}: unknown op {op!r}")
             continue
         if target not in TARGET_LIMITS:
             problems.append(f"decision {index}: unknown target {target!r}")
             continue
-        entry = _strip_tags(str(raw.get("entry", "")))
+        entry = _strip_tags(str(item.get("entry", "")))
         if op == "drop":
-            if not str(raw.get("match", "")).strip():
+            if not str(item.get("match", "")).strip():
                 problems.append(f"decision {index}: drop without 'match'")
                 continue
         elif op != "reject":
@@ -271,25 +275,25 @@ def parse_decisions(text: str) -> tuple[list[Decision] | None, list[str]]:
             if len(entry) > MAX_ENTRY_CHARS:
                 problems.append(f"decision {index}: entry longer than {MAX_ENTRY_CHARS} chars")
                 continue
-            if op in {"merge", "supersede"} and not str(raw.get("match", "")).strip():
+            if op in {"merge", "supersede"} and not str(item.get("match", "")).strip():
                 problems.append(f"decision {index}: {op} without 'match'")
                 continue
-            if not str(raw.get("source", "")).strip():
+            if not str(item.get("source", "")).strip():
                 problems.append(f"decision {index}: entry without source")
                 continue
         try:
-            importance = int(raw.get("importance", 5))
+            importance = int(item.get("importance", 5))
         except (TypeError, ValueError):
             importance = 5
         decisions.append(Decision(
             op=op, target=target, entry=entry,
-            source=str(raw.get("source", "")).strip(),
-            observed=str(raw.get("observed", "")).strip(),
+            source=str(item.get("source", "")).strip(),
+            observed=str(item.get("observed", "")).strip(),
             importance=max(1, min(10, importance)),
-            trigger=str(raw.get("trigger", "")).strip(),
-            match=str(raw.get("match", "")).strip(),
-            section=str(raw.get("section", "")).strip(),
-            reason=str(raw.get("reason", "")).strip(),
+            trigger=str(item.get("trigger", "")).strip(),
+            match=str(item.get("match", "")).strip(),
+            section=str(item.get("section", "")).strip(),
+            reason=str(item.get("reason", "")).strip(),
         ))
     return decisions, problems
 
@@ -435,7 +439,7 @@ def fallback_entries(candidates: Sequence[Candidate], *, limit: int = 5) -> list
     promoted by the gate alone, marked ``unconsolidated`` so a later run can merge
     them properly.
     """
-    entries = []
+    entries: list[str] = []
     for candidate in candidates[:limit]:
         importance = max(1, min(10, round(candidate.score * 10)))
         entries.append(render_entry(candidate.content, source=candidate.source,
