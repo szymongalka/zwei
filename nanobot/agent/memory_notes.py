@@ -15,12 +15,19 @@ appended, and the index lines are returned for whoever owns `MEMORY.md`.
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from loguru import logger
+
 NOTES_DIR = "memory/notes"
+#: Retrieval journals are evidence, not memory: they are trimmed, never unbounded.
+STATS_MAX_BYTES = 1_000_000
+STATS_KEEP_LINES = 1000
 NOTE_LEVELS = ("summary", "overview", "full")
 #: Roughly 100 and 2000 tokens, the three levels described in the design.
 SUMMARY_CHARS = 400
@@ -98,6 +105,28 @@ def index_lines(workspace: Path, *, limit: int = 40) -> list[str]:
         if len(lines) >= limit:
             break
     return lines
+
+
+def append_stats_line(workspace: Path, name: str, record: Mapping[str, object],
+                      *, max_bytes: int = STATS_MAX_BYTES,
+                      keep_lines: int = STATS_KEEP_LINES) -> None:
+    """Append one evidence line to a bounded journal under `memory/`.
+
+    Shared by the archive retrieval journal and the trigger journal so both obey the
+    same discipline: append, then trim to the newest lines. Never raises - a journal
+    that cannot be written must not fail a turn.
+    """
+    path = workspace / "memory" / name
+    try:
+        if not path.parent.is_dir():
+            return
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+        if path.stat().st_size > max_bytes:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            path.write_text("\n".join(lines[-keep_lines:]) + "\n", encoding="utf-8")
+    except OSError:
+        logger.debug("memory journal is not writable: {}", path)
 
 
 def append_day_note(workspace: Path, line: str, *, day: str | None = None) -> Path:

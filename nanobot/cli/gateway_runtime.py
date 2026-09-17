@@ -511,6 +511,19 @@ def _run_gateway(
         agent.register_runtime_context_provider(personal.runtime_context)
         agent.context.memory.archive_sink = personal.archive
         agent.context.memory.episode_sink = personal.record_episode
+    # Curated-note triggers are independent of the personal addon: they read the
+    # workspace memory files, so they are registered even without a personal account.
+    from nanobot.agent import memory_triggers
+
+    if memory_triggers.enabled():
+        trigger_workspace = agent.context.memory.workspace
+
+        async def _memory_trigger_context(request: Any) -> Any:
+            return await asyncio.to_thread(
+                memory_triggers.build_block, trigger_workspace,
+                request.original_user_text or "")
+
+        agent.register_runtime_context_provider(_memory_trigger_context)
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 

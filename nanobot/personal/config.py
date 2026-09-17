@@ -26,6 +26,12 @@ class PersonalConfig(Base):
     retrieval_anchor_strong_similarity: float = Field(default=0.72, ge=0.0, le=1.0)
     retrieval_max_per_source: int = Field(default=2, ge=1, le=8)
     retrieval_stats_enabled: bool = True
+    # Freshness decay for archive records: score x 0.5**(age/half-life). Measured
+    # 2026-09-17 on the frozen 60-question benchmark: half-life 30 costs 5 points of
+    # recall@1 (0.75 -> 0.70) and 0.027 MRR@8 while recall@8 stays flat, because an
+    # old invoice is still the right answer to a question about it. Off by default;
+    # a positive value turns the decay on.
+    retrieval_freshness_half_life_days: float = Field(default=0.0, ge=0.0, le=3650.0)
     # `used` loop: score every injected record against the answer it produced and
     # journal the signal for the promotion gate. Read-only w.r.t. the archive.
     retrieval_used_tracking: bool = True

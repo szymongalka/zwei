@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -16,7 +17,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from nanobot.agent.hook import AgentHook, AgentRunHookContext, AgentTurnHookContext
-from nanobot.agent.memory_notes import append_day_note
+from nanobot.agent.memory_notes import append_day_note, append_stats_line
 from nanobot.agent.tools.context import RequestContext
 from nanobot.personal.config import Account, PersonalConfig
 from nanobot.personal.connectors import dav_sync, mailbox_sync, send_mail, test_account
@@ -57,6 +58,19 @@ USED_COVERAGE_THRESHOLD = 0.25
 USED_MIN_WORD_CHARS = 5
 # Injections waiting for their answer; a session that never finishes cannot grow this.
 PENDING_INJECTION_LIMIT = 32
+
+
+def age_in_days(created: object) -> float | None:
+    """Age of a record in days from its ISO timestamp; ``None`` when unreadable."""
+    if not isinstance(created, str) or not created:
+        return None
+    try:
+        stamp = datetime.fromisoformat(created)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - stamp).total_seconds() / 86400)
 
 
 def excerpt_similarity(left: str, right: str) -> float:
@@ -352,9 +366,27 @@ class PersonalService:
                 identifier = result["id"]
                 scores[identifier] = scores.get(identifier, 0) + weight / (60 + rank + 1)
                 records.setdefault(identifier, result)
-        fused = [records[key] for key in sorted(scores, key=lambda key: scores[key], reverse=True)[:limit]]
+        fused = [records[key] for key in sorted(
+            scores, key=lambda key: self._rank_score(scores[key], records[key]), reverse=True)[:limit]]
         return [{**record, "excerpt": readable_excerpt(record["excerpt"], EXCERPT_LIMIT)}
                 for record in fused]
+
+    def _rank_score(self, score: float, record: Mapping[str, Any]) -> float:
+        """Fused score with an optional freshness decay for archive records.
+
+        Recency is a tie-breaker, not a filter, and on this corpus it is not even
+        that: measured on the frozen 60-question benchmark (2026-09-17), a 30-day
+        half-life costs 5 points of recall@1 and 0.027 MRR@8 with no gain in
+        recall@8. The default is therefore 0 (off); a positive half-life turns the
+        decay on for whoever measures a reason to.
+        """
+        half_life = self.config.retrieval_freshness_half_life_days
+        if half_life <= 0:
+            return score
+        age_days = age_in_days(record.get("created"))
+        if age_days is None:
+            return score
+        return score * 0.5 ** (age_days / half_life)
 
     async def runtime_context(self, request: RequestContext) -> RuntimeContextBlock | None:
         query = (request.original_user_text or "").strip()
@@ -397,33 +429,27 @@ class PersonalService:
         """Append one evidence line per retrieval attempt; never gates a turn."""
         if not self.config.retrieval_stats_enabled:
             return
-        path = self.workspace / "memory" / "retrieval_stats.jsonl"
-        try:
-            if not path.parent.is_dir():
-                return
-            similarities = [value for value in map(record_similarity, candidates) if value is not None]
-            record = {
-                "at": utcnow(),
-                "query_chars": len(query),
-                "policy": self.store.checkpoint("retrieval_policy", "hybrid"),
-                "scope": self.config.retrieval_scope,
-                "candidates": evidence["candidates"],
-                "kept": len(kept),
-                "unanchored": evidence["unanchored"],
-                "source_capped": evidence["source_capped"],
-                "duplicate": evidence["duplicate"],
-                "characters": sum(len(str(item.get("excerpt", ""))) for item in kept),
-                "sources": len({str(item.get("source", "")) for item in kept}),
-                "strongest_similarity": round(max(similarities), 4) if similarities else None,
-                "latency_ms": latency_ms,
-            }
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            if path.stat().st_size > RETRIEVAL_STATS_MAX_BYTES:
-                lines = path.read_text(encoding="utf-8").splitlines()
-                path.write_text("\n".join(lines[-RETRIEVAL_STATS_KEEP_LINES:]) + "\n", encoding="utf-8")
-        except OSError:
-            logger.debug("retrieval stats journal is not writable: {}", path)
+        similarities = [value for value in map(record_similarity, candidates) if value is not None]
+        record = {
+            "at": utcnow(),
+            "kind": "archive",
+            "query_chars": len(query),
+            "policy": self.store.checkpoint("retrieval_policy", "hybrid"),
+            "scope": self.config.retrieval_scope,
+            "freshness_half_life_days": self.config.retrieval_freshness_half_life_days,
+            "candidates": evidence["candidates"],
+            "kept": len(kept),
+            "unanchored": evidence["unanchored"],
+            "source_capped": evidence["source_capped"],
+            "duplicate": evidence["duplicate"],
+            "characters": sum(len(str(item.get("excerpt", ""))) for item in kept),
+            "sources": len({str(item.get("source", "")) for item in kept}),
+            "strongest_similarity": round(max(similarities), 4) if similarities else None,
+            "latency_ms": latency_ms,
+        }
+        append_stats_line(self.workspace, "retrieval_stats.jsonl", record,
+                          max_bytes=RETRIEVAL_STATS_MAX_BYTES,
+                          keep_lines=RETRIEVAL_STATS_KEEP_LINES)
 
     def _remember_injection(self, session_key: str | None, query: str,
                             records: list[dict[str, Any]]) -> None:
