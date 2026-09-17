@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from filelock import FileLock, Timeout
 from loguru import logger
@@ -42,6 +43,20 @@ RETRIEVAL_CANDIDATES = 8
 # The retrieval journal is evidence, not memory: it is trimmed, never unbounded.
 RETRIEVAL_STATS_MAX_BYTES = 1_000_000
 RETRIEVAL_STATS_KEEP_LINES = 1000
+# The `used` journal answers a different question than the retrieval journal: not
+# "what was injected" but "did the injected record show up in the answer".
+USED_JOURNAL_NAME = "retrieval_used.jsonl"
+USED_JOURNAL_MAX_BYTES = 1_000_000
+USED_JOURNAL_KEEP_LINES = 1000
+# Coverage of an excerpt's distinctive words by the answer text above which the
+# record is treated as used. Measured on real answers (2026-09-17): a paraphrased
+# answer that acted on a record keeps 0.3-0.6 of its long words, while an answer
+# that ignored the record keeps none.
+USED_COVERAGE_THRESHOLD = 0.25
+# Words shorter than this are too common to be evidence of reuse.
+USED_MIN_WORD_CHARS = 5
+# Injections waiting for their answer; a session that never finishes cannot grow this.
+PENDING_INJECTION_LIMIT = 32
 
 
 def excerpt_similarity(left: str, right: str) -> float:
@@ -56,6 +71,32 @@ def excerpt_similarity(left: str, right: str) -> float:
     right_trigrams = {second[index:index + 3] for index in range(len(second) - 2)}
     union = left_trigrams | right_trigrams
     return len(left_trigrams & right_trigrams) / len(union) if union else 0.0
+
+
+def answer_coverage(excerpt: str, answer: str) -> float:
+    """Share of an excerpt's distinctive words that the answer actually used.
+
+    A deterministic proxy, not a proof: it counts long words (>= ``USED_MIN_WORD_CHARS``)
+    shared between the injected excerpt and the answer text. Paraphrase keeps most
+    of them, an answer that went another way keeps none.
+    """
+    words = {word for word in re.findall(r"\w{%d,}" % USED_MIN_WORD_CHARS, excerpt.lower())}
+    if not words:
+        return 0.0
+    used = set(re.findall(r"\w{%d,}" % USED_MIN_WORD_CHARS, answer.lower()))
+    return len(words & used) / len(words)
+
+
+def injection_signal(coverage: float) -> str:
+    """Signal for one injected record: ``used``, ``unused`` or ``unused-strong``.
+
+    ``unused-strong`` means the answer shows no trace of the record at all — the
+    injection spent context budget and bought nothing, which is the case the
+    promotion gate must not reward.
+    """
+    if coverage <= 0.0:
+        return "unused-strong"
+    return "used" if coverage >= USED_COVERAGE_THRESHOLD else "unused"
 
 
 def collapse_duplicate_excerpts(items: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
@@ -189,6 +230,9 @@ class PersonalService:
         self.store = PersonalStore(Path(config.data_dir), workspace)
         self.vector = (VectorMemory(self.store, Path(config.postgres_file).expanduser(),
                                     config.embedding_model) if config.postgres_file else None)
+        # Injections wait here for the answer that decides whether they were used.
+        self._pending_injections: dict[str, dict[str, Any]] = {}
+        self._injection_lock = threading.Lock()
 
     def status(self) -> dict[str, Any]:
         return {"enabled": True, "memory": self.store.status(),
@@ -332,6 +376,7 @@ class PersonalService:
         evidence["duplicate"] = len(selected) - len(collapsed)
         informative = collapsed[:RETRIEVAL_LIMIT]
         self._record_retrieval_stats(query, results, informative, evidence, latency_ms)
+        self._remember_injection(request.session_key or request.turn_id, query, informative)
         if not informative:
             return None
         encoded = json.dumps(informative, ensure_ascii=False).replace("[", "\\u005b").replace("]", "\\u005d")
@@ -380,12 +425,74 @@ class PersonalService:
         except OSError:
             logger.debug("retrieval stats journal is not writable: {}", path)
 
+    def _remember_injection(self, session_key: str | None, query: str,
+                            records: list[dict[str, Any]]) -> None:
+        """Keep the records injected into one session until its answer arrives."""
+        if not session_key or not records or not self.config.retrieval_used_tracking:
+            return
+        with self._injection_lock:
+            self._pending_injections[session_key] = {
+                "at": utcnow(),
+                "query": query,
+                "records": [{"id": str(item.get("id", "")), "source": str(item.get("source", "")),
+                             "excerpt": str(item.get("excerpt", ""))} for item in records],
+            }
+            while len(self._pending_injections) > PENDING_INJECTION_LIMIT:
+                self._pending_injections.pop(next(iter(self._pending_injections)))
+
+    def _record_injection_use(self, session_key: str | None, answer: str | None) -> None:
+        """Score the last injection of one session against the answer it produced.
+
+        Deterministic and model-free: it measures how much of each injected excerpt
+        survives into the answer.  The result is evidence for the promotion gate —
+        a record that is injected and never used must not earn a promotion — and
+        never gates the turn itself.
+        """
+        if not session_key or not self.config.retrieval_used_tracking:
+            return
+        with self._injection_lock:
+            pending = self._pending_injections.pop(session_key, None)
+        if not pending:
+            return
+        text = (answer or "").strip()
+        scored: list[dict[str, Any]] = []
+        for item in cast(list[dict[str, Any]], pending["records"]):
+            coverage = answer_coverage(str(item.get("excerpt", "")), text)
+            scored.append({"id": item.get("id", ""), "source": item.get("source", ""),
+                           "signal": injection_signal(coverage), "coverage": round(coverage, 3)})
+        self._append_used_journal({
+            "at": utcnow(),
+            "query_chars": len(pending["query"]),
+            "answer_chars": len(text),
+            "records": scored,
+            "used": sum(1 for item in scored if item["signal"] == "used"),
+        })
+
+    def _append_used_journal(self, record: Mapping[str, Any]) -> None:
+        """Append one used-signal line; never gates a turn."""
+        path = self.workspace / "memory" / USED_JOURNAL_NAME
+        try:
+            if not path.parent.is_dir():
+                return
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if path.stat().st_size > USED_JOURNAL_MAX_BYTES:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                path.write_text("\n".join(lines[-USED_JOURNAL_KEEP_LINES:]) + "\n", encoding="utf-8")
+        except OSError:
+            logger.debug("used-signal journal is not writable: {}", path)
+
     def hook(self, turn: AgentTurnHookContext) -> AgentHook:
         store = self.store
         sessions = self.sessions
+        service = self
 
         class ArchiveTurn(AgentHook):
             async def after_run(self, context: AgentRunHookContext) -> None:
+                # The used-signal is independent of persistence policy: an injected
+                # record either shows up in the answer or it does not.
+                await asyncio.to_thread(service._record_injection_use,
+                                        turn.session_key, context.final_content)
                 if turn.ephemeral or not turn.session_key:
                     return
                 session = sessions.get_cached(turn.session_key) if sessions else None
