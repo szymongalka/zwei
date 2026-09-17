@@ -456,6 +456,8 @@
     },
     "rows": {
       "theme": "Theme",
+      "themeStyle": "Appearance style",
+      "glassClarity": "Glass clarity",
       "language": "Language",
       "provider": "Provider",
       "model": "Model",
@@ -716,6 +718,10 @@
     "values": {
       "light": "Light",
       "dark": "Dark",
+      "classic": "Classic",
+      "liquidGlass": "Liquid Glass",
+      "glassClear": "Clear",
+      "glassTinted": "Tinted",
       "notAvailable": "Not available",
       "enabled": "Enabled",
       "disabled": "Disabled",

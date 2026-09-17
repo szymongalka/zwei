@@ -216,6 +216,8 @@
     },
     "rows": {
       "theme": "테마",
+      "themeStyle": "모양 스타일",
+      "glassClarity": "유리 투명도",
       "language": "언어",
       "provider": "제공업체",
       "model": "모델",
@@ -308,6 +310,10 @@
     "values": {
       "light": "라이트",
       "dark": "다크",
+      "classic": "클래식",
+      "liquidGlass": "리퀴드 글래스",
+      "glassClear": "투명",
+      "glassTinted": "틴트",
       "notAvailable": "사용 불가",
       "enabled": "활성화됨",
       "disabled": "비활성화됨",

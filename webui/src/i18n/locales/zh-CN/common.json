@@ -456,6 +456,8 @@
     },
     "rows": {
       "theme": "主题",
+      "themeStyle": "外观样式",
+      "glassClarity": "玻璃通透度",
       "language": "语言",
       "provider": "提供商",
       "model": "模型",
@@ -716,6 +718,10 @@
     "values": {
       "light": "浅色",
       "dark": "深色",
+      "classic": "经典",
+      "liquidGlass": "液态玻璃",
+      "glassClear": "通透",
+      "glassTinted": "着色",
       "notAvailable": "不可用",
       "enabled": "已启用",
       "disabled": "已停用",

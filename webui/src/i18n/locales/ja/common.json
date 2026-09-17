@@ -216,6 +216,8 @@
     },
     "rows": {
       "theme": "テーマ",
+      "themeStyle": "外観スタイル",
+      "glassClarity": "ガラスの透明度",
       "language": "言語",
       "provider": "プロバイダー",
       "model": "モデル",
@@ -308,6 +310,10 @@
     "values": {
       "light": "ライト",
       "dark": "ダーク",
+      "classic": "クラシック",
+      "liquidGlass": "リキッドグラス",
+      "glassClear": "クリア",
+      "glassTinted": "ティント",
       "notAvailable": "利用不可",
       "enabled": "有効",
       "disabled": "無効",

@@ -216,6 +216,8 @@
     },
     "rows": {
       "theme": "Tema",
+      "themeStyle": "Gaya tampilan",
+      "glassClarity": "Kejernihan kaca",
       "language": "Bahasa",
       "provider": "Penyedia",
       "model": "Model",
@@ -308,6 +310,10 @@
     "values": {
       "light": "Terang",
       "dark": "Gelap",
+      "classic": "Klasik",
+      "liquidGlass": "Liquid Glass",
+      "glassClear": "Bening",
+      "glassTinted": "Berwarna",
       "notAvailable": "Tidak tersedia",
       "enabled": "Aktif",
       "disabled": "Nonaktif",

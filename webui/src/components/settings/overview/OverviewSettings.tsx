@@ -31,6 +31,7 @@ import { ToggleButton } from "@/components/settings/ToggleButton";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
+import type { GlassClarity, ThemeStyle } from "@/hooks/useTheme";
 import { checkVersion } from "@/lib/api";
 import type {
   FileEditDisplayMode,
@@ -260,11 +261,19 @@ function VersionCheckRow({ currentVersion }: { currentVersion?: string }) {
 export function AppearanceSettings({
   theme,
   onToggleTheme,
+  themeStyle,
+  glassClarity,
+  onThemeStyleChange,
+  onGlassClarityChange,
   localPrefs,
   onChangeLocalPrefs,
 }: {
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  themeStyle: ThemeStyle;
+  glassClarity: GlassClarity;
+  onThemeStyleChange?: (style: ThemeStyle) => void;
+  onGlassClarityChange?: (clarity: GlassClarity) => void;
   localPrefs: LocalPreferences;
   onChangeLocalPrefs: Dispatch<SetStateAction<LocalPreferences>>;
 }) {
@@ -290,6 +299,43 @@ export function AppearanceSettings({
               }}
             />
           </SettingsRow>
+
+          <SettingsRow title={tx("settings.rows.themeStyle", "Appearance style")}>
+            <SegmentedControl
+              value={themeStyle}
+              ariaLabel={tx("settings.rows.themeStyle", "Appearance style")}
+              className="bg-muted p-0.5"
+              itemClassName="px-3"
+              options={[
+                { value: "classic", label: tx("settings.values.classic", "Classic") },
+                {
+                  value: "liquid-glass",
+                  label: tx("settings.values.liquidGlass", "Liquid Glass"),
+                },
+              ]}
+              onChange={(nextStyle) => {
+                if (nextStyle !== themeStyle) onThemeStyleChange?.(nextStyle);
+              }}
+            />
+          </SettingsRow>
+
+          {themeStyle === "liquid-glass" ? (
+            <SettingsRow title={tx("settings.rows.glassClarity", "Glass clarity")}>
+              <SegmentedControl
+                value={glassClarity}
+                ariaLabel={tx("settings.rows.glassClarity", "Glass clarity")}
+                className="bg-muted p-0.5"
+                itemClassName="px-3"
+                options={[
+                  { value: "clear", label: tx("settings.values.glassClear", "Clear") },
+                  { value: "tinted", label: tx("settings.values.glassTinted", "Tinted") },
+                ]}
+                onChange={(nextClarity) => {
+                  if (nextClarity !== glassClarity) onGlassClarityChange?.(nextClarity);
+                }}
+              />
+            </SettingsRow>
+          ) : null}
 
           <SettingsRow title={t("settings.rows.language")}>
             <LanguageSwitcher />

@@ -226,4 +226,39 @@ describe("Settings overview and appearance", () => {
 
     expect(screen.getByLabelText(/2026-06-03: 1,500 tokens, 2 requests/)).toBeInTheDocument();
   });
+
+  it("switches the appearance palette from the classic surfaces to Liquid Glass", () => {
+    const onThemeStyleChange = vi.fn();
+    renderSettingsView({
+      initialSection: "appearance",
+      initialSettings: settingsPayload(),
+      showSidebar: true,
+      onThemeStyleChange,
+    });
+
+    expect(screen.getByText("Appearance style")).toBeInTheDocument();
+    // Clarity only matters for the glass material, so it stays hidden until it applies.
+    expect(screen.queryByText("Glass clarity")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Liquid Glass" }));
+
+    expect(onThemeStyleChange).toHaveBeenCalledWith("liquid-glass");
+  });
+
+  it("exposes the glass clarity control once the glass palette is active", () => {
+    const onGlassClarityChange = vi.fn();
+    renderSettingsView({
+      initialSection: "appearance",
+      initialSettings: settingsPayload(),
+      showSidebar: true,
+      themeStyle: "liquid-glass",
+      onGlassClarityChange,
+    });
+
+    expect(screen.getByText("Glass clarity")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tinted" }));
+
+    expect(onGlassClarityChange).toHaveBeenCalledWith("tinted");
+  });
 });

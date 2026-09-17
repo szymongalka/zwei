@@ -17,6 +17,8 @@
       content="#ffffff"
       data-theme-color-light="#ffffff"
       data-theme-color-dark="#303030"
+      data-theme-color-light-glass="#eef1f7"
+      data-theme-color-dark-glass="#080a0f"
     />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -54,6 +56,19 @@
 
       html.dark body {
         background: #303030;
+        color: #fafafa;
+      }
+
+      /* Liquid Glass paints its wallpaper from the stylesheet. Keep the boot
+         splash on the wallpaper base colour and on <html>, so the canvas veil
+         that the glass stylesheet puts on <body> can keep letting the wallpaper
+         through once the bundle has loaded. */
+      html.theme-liquid-glass {
+        background-color: #eef1f7;
+      }
+
+      html.theme-liquid-glass.dark {
+        background-color: #080a0f;
         color: #fafafa;
       }
 
@@ -110,11 +125,37 @@
               window.matchMedia &&
               window.matchMedia("(prefers-color-scheme: dark)").matches);
           if (dark) document.documentElement.classList.add("dark");
+
+          /* Appearance palette and Liquid Glass clarity, applied before the
+             bundle loads so the first paint already uses the chosen material. */
+          var style = "classic";
+          var clarity = "clear";
+          try {
+            style = localStorage.getItem("nanobot-webui.theme-style") === "liquid-glass"
+              ? "liquid-glass"
+              : "classic";
+            clarity = localStorage.getItem("nanobot-webui.glass-clarity") === "tinted"
+              ? "tinted"
+              : "clear";
+          } catch {}
+          if (style === "liquid-glass") {
+            document.documentElement.classList.add("theme-liquid-glass");
+          }
+          document.documentElement.setAttribute("data-glass-clarity", clarity);
+
           var themeColor = document.querySelector('meta[name="theme-color"]');
           if (themeColor) {
-            var color = themeColor.getAttribute(
-              dark ? "data-theme-color-dark" : "data-theme-color-light"
-            );
+            var glass = style === "liquid-glass";
+            var color = glass
+              ? themeColor.getAttribute(
+                dark ? "data-theme-color-dark-glass" : "data-theme-color-light-glass"
+              )
+              : null;
+            if (!color) {
+              color = themeColor.getAttribute(
+                dark ? "data-theme-color-dark" : "data-theme-color-light"
+              );
+            }
             if (color) themeColor.setAttribute("content", color);
           }
         } catch {}

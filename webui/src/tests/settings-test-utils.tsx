@@ -139,6 +139,10 @@ export function renderSettingsView(
     initialSettings?: SettingsPayload;
     showSidebar?: boolean;
     mainNavigationExpanded?: boolean;
+    themeStyle?: React.ComponentProps<typeof SettingsView>["themeStyle"];
+    glassClarity?: React.ComponentProps<typeof SettingsView>["glassClarity"];
+    onThemeStyleChange?: (style: "classic" | "liquid-glass") => void;
+    onGlassClarityChange?: (clarity: "clear" | "tinted") => void;
     onBackToChat?: () => void;
     onSettingsChange?: (payload: SettingsPayload) => void;
     onStartAutomationChat?: React.ComponentProps<typeof SettingsView>["onStartAutomationChat"];
@@ -154,6 +158,10 @@ export function renderSettingsView(
         initialSettings={options.initialSettings}
         showSidebar={options.showSidebar}
         mainNavigationExpanded={options.mainNavigationExpanded}
+        themeStyle={options.themeStyle}
+        glassClarity={options.glassClarity}
+        onThemeStyleChange={options.onThemeStyleChange}
+        onGlassClarityChange={options.onGlassClarityChange}
         onToggleTheme={() => {}}
         onBackToChat={options.onBackToChat ?? (() => {})}
         onModelNameChange={() => {}}

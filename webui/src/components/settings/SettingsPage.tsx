@@ -40,6 +40,7 @@ import { RUNTIME_CONFIG_FIELDS, type RuntimeConfigPage } from "@/components/sett
 import { RuntimeConfigSettings } from "@/components/settings/system/RuntimeConfigSettings";
 import { RuntimeSettings } from "@/components/settings/system/RuntimeSettings";
 import type { SettingsController } from "@/components/settings/useSettingsController";
+import type { GlassClarity, ThemeStyle } from "@/hooks/useTheme";
 import type { SendAttachment, SendOptions } from "@/hooks/useNanobotStream";
 import type { SessionAutomationJob, SkillSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,10 @@ interface SettingsPageProps {
   registerExitGuard?: (guard: SettingsExitGuard | null) => void;
   controller: SettingsController;
   theme: "light" | "dark";
+  themeStyle?: ThemeStyle;
+  glassClarity?: GlassClarity;
+  onThemeStyleChange?: (style: ThemeStyle) => void;
+  onGlassClarityChange?: (clarity: GlassClarity) => void;
   showSidebar: boolean;
   mainNavigationExpanded: boolean;
   onToggleTheme: () => void;
@@ -69,6 +74,10 @@ export function SettingsPage({
   registerExitGuard,
   controller,
   theme,
+  themeStyle = "classic",
+  glassClarity = "clear",
+  onThemeStyleChange,
+  onGlassClarityChange,
   showSidebar,
   mainNavigationExpanded,
   onToggleTheme,
@@ -330,7 +339,11 @@ export function SettingsPage({
         return (
           <AppearanceSettings
             theme={theme}
+            themeStyle={themeStyle}
+            glassClarity={glassClarity}
             onToggleTheme={onToggleTheme}
+            onThemeStyleChange={onThemeStyleChange}
+            onGlassClarityChange={onGlassClarityChange}
             localPrefs={localPrefs}
             onChangeLocalPrefs={setLocalPrefs}
           />
