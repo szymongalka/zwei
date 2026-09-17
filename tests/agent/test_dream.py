@@ -110,7 +110,55 @@ class TestBuildDreamPrompt:
 
         assert result is not None
         prompt, _ = result
-        assert prompt.startswith(store.default_dream_prompt() + "\n\n## Conversation History\n")
+        assert prompt.startswith(store.default_dream_prompt() + "\n\n## History batch\n")
+        assert prompt.index("## History batch") < prompt.index("## Conversation History")
+
+    def test_dream_prompt_states_which_slice_of_the_journal_it_reads(self, store):
+        for index in range(25):
+            store.append_history(f"entry {index}")
+
+        result = store.build_dream_prompt(max_entries=20)
+
+        assert result is not None
+        prompt, last_cursor = result
+        assert "history cursors 1-20 (20 entries)" in prompt
+        assert "5 further journal entries remain unprocessed" in prompt
+        assert last_cursor == 20
+        assert "entry 19" in prompt and "entry 20" not in prompt
+
+    def test_dream_prompt_collapses_near_duplicate_entries(self, store):
+        repeated = "Gateway restart emptied the outbox queue " + "detail " * 60
+        store.append_history(repeated)
+        store.append_history(repeated + " \u2014 korekta")
+        store.append_history("Distinct decision about invoice numbering")
+
+        result = store.build_dream_prompt()
+
+        assert result is not None
+        prompt, last_cursor = result
+        assert prompt.count("Gateway restart emptied the outbox queue") == 1
+        assert "Distinct decision about invoice numbering" in prompt
+        assert "1 near-duplicate entries were collapsed" in prompt
+        # The cursor still moves past every entry of the batch.
+        assert last_cursor == 3
+
+    def test_dream_run_outcome_is_journalled(self, store):
+        store.append_history("one fact")
+        assert store.build_dream_prompt() is not None
+
+        record = store.record_dream_run(completed=True, commit="abc123")
+
+        assert record is not None
+        assert record["completed"] is True
+        assert record["commit"] == "abc123"
+        assert record["cursors"] == [1, 1]
+        log = (store.memory_dir / "dream_log.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(log) == 1
+        assert '"completed": true' in log[0]
+
+    def test_dream_journal_ignores_runs_without_a_batch(self, store):
+        assert store.record_dream_run(completed=True) is None
+        assert not (store.memory_dir / "dream_log.jsonl").exists()
 
     def test_truncates_long_entries_at_1000_chars(self, store):
         long_content = "x" * 2000

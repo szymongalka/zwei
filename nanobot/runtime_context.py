@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -243,3 +244,22 @@ def public_history_message(message: Mapping[str, Any]) -> dict[str, Any]:
 def public_history_messages(messages: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Return user-visible copies of persisted messages."""
     return [public_history_message(message) for message in messages]
+
+
+_RUNTIME_CONTEXT_BLOCK = re.compile(
+    re.escape(RUNTIME_CONTEXT_TAG) + r".*?" + re.escape(RUNTIME_CONTEXT_END),
+    re.DOTALL,
+)
+
+
+def strip_runtime_context_envelope(text: str) -> str:
+    """Remove injected runtime-context blocks from text that is about to be indexed.
+
+    Persisted messages keep their exact content; only derived projections (search
+    text, archive indexing) are cleaned, so the archive never indexes its own
+    injections as if the user had written them.  Marker-less legacy content is
+    recognised by the envelope tags and left untouched when they are absent.
+    """
+    if RUNTIME_CONTEXT_TAG not in text:
+        return text
+    return _RUNTIME_CONTEXT_BLOCK.sub("", text).strip()

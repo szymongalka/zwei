@@ -85,6 +85,7 @@ class MemoryStore:
         self._malformed_entry_logged = False  # rate-limit bad history shape warning
         self._oversize_logged = False  # rate-limit oversized-entry warning
         self._dream_prompt_oversize_logged = False
+        self._last_dream_batch: dict[str, Any] | None = None
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
         self._git = GitStore(workspace, tracked_files=[
             "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
@@ -554,14 +555,89 @@ class MemoryStore:
         if not entries:
             return None
 
-        batch = entries[:max_entries]
+        original_batch = entries[:max_entries]
+        remaining = len(entries) - len(original_batch)
+        batch, duplicates = dedupe_history_batch(original_batch)
         history_text = "\n".join(
-            f"[{e['timestamp']}] {truncate_text(e['content'], 1000)}"
+            f"[{e['timestamp']}] {truncate_text(e['content'], DREAM_PROMPT_ENTRY_CHARS)}"
             for e in batch
         )
         template = self._dream_template()
-        prompt = f"{template}\n\n## Conversation History\n{history_text}"
-        return (prompt, batch[-1]["cursor"])
+        header = self._dream_batch_header(batch, remaining=remaining, duplicates=duplicates)
+        prompt = f"{template}\n\n{header}\n\n## Conversation History\n{history_text}"
+        # The cursor must move past every entry of the batch, including collapsed
+        # duplicates: their information is already covered by the newest copy.
+        last_batch_cursor = original_batch[-1]["cursor"]
+        self._last_dream_batch = {
+            "entries": len(original_batch),
+            "shown": len(batch),
+            "duplicates": duplicates,
+            "first_cursor": original_batch[0]["cursor"],
+            "last_cursor": last_batch_cursor,
+            "remaining": remaining,
+        }
+        return (prompt, last_batch_cursor)
+
+    @staticmethod
+    def _dream_batch_header(
+        batch: list[dict[str, Any]],
+        *,
+        remaining: int,
+        duplicates: int,
+    ) -> str:
+        """Tell Dream exactly which slice of the journal it is reading."""
+        first = batch[0]["cursor"] if batch else None
+        last = batch[-1]["cursor"] if batch else None
+        lines = [
+            "## History batch",
+            f"- This run covers history cursors {first}-{last} ({len(batch)} entries).",
+            f"- {remaining} further journal entries remain unprocessed; they arrive in a later run.",
+        ]
+        if duplicates:
+            lines.append(
+                f"- {duplicates} near-duplicate entries were collapsed in this view; the newest copy is shown."
+            )
+        lines.append(
+            "- Consolidate only what this batch supports and do not claim the whole journal was processed."
+        )
+        return "\n".join(lines)
+
+    def record_dream_run(
+        self,
+        *,
+        completed: bool,
+        reason: str = "",
+        commit: str = "",
+    ) -> dict[str, Any] | None:
+        """Append one Dream run outcome to the audit journal (best effort)."""
+        batch = self._last_dream_batch
+        if batch is None:
+            return None
+        record = {
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "entries": batch["entries"],
+            "shown": batch["shown"],
+            "duplicates": batch["duplicates"],
+            "cursors": [batch["first_cursor"], batch["last_cursor"]],
+            "remaining": batch["remaining"],
+            "completed": bool(completed),
+            "reason": reason or None,
+            "commit": commit or None,
+        }
+        path = self.memory_dir / DREAM_LOG_NAME
+        try:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if path.stat().st_size > DREAM_LOG_MAX_BYTES:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                path.write_text("\n".join(lines[-DREAM_LOG_KEEP_LINES:]) + "\n", encoding="utf-8")
+        except OSError:
+            logger.warning("Dream journal is not writable: {}", path)
+        return record
+
+    def dream_remaining_entries(self) -> int:
+        """Unprocessed history entries left after the last batch."""
+        return len(self.read_unprocessed_history(since_cursor=self.get_last_dream_cursor()))
 
     def dream_content_diff(self) -> str:
         """Structured summary of uncommitted changes to the durable memory files.
@@ -750,10 +826,66 @@ class MemoryStore:
 # emergency hard cap against pathological provider output.
 _RAW_ARCHIVE_MAX_CHARS = 16_000   # fallback dump (LLM failed)
 _HISTORY_ENTRY_HARD_CAP = 64_000  # emergency cap in append_history
+# One Dream run reads a bounded batch; the batch must say so explicitly, and a
+# batch full of restatements of the same event must not waste its budget.
+DREAM_PROMPT_ENTRY_CHARS = 1000
+# Measured on real journal pairs (2026-09-17): restatements of the same entry land
+# at 0.83-1.0 trigram similarity, while a single changed word already drops to 0.70.
+# 0.8 therefore collapses repeats without swallowing distinct content.
+DREAM_BATCH_DEDUP_THRESHOLD = 0.8
+# Short entries are cheap and share trigrams by accident ("entry 1" vs "entry 10"),
+# so only entries at least this long are compared for duplication.
+DREAM_BATCH_DEDUP_MIN_CHARS = 200
+DREAM_LOG_NAME = "dream_log.jsonl"
+DREAM_LOG_MAX_BYTES = 1_000_000
+DREAM_LOG_KEEP_LINES = 500
 _ARCHIVE_TOOL_RESULT = (
     "Session archival does not execute tools. Use only the supplied conversation and "
     "return the requested compact checkpoint now; do not call another tool."
 )
+
+
+def _trigram_similarity(left: str, right: str) -> float:
+    """Trigram Jaccard similarity of two whitespace-normalized strings (1.0 = identical)."""
+    first = re.sub(r"\s+", " ", left.lower()).strip()
+    second = re.sub(r"\s+", " ", right.lower()).strip()
+    if first == second:
+        return 1.0
+    if len(first) < 3 or len(second) < 3:
+        return 0.0
+    left_grams = {first[index:index + 3] for index in range(len(first) - 2)}
+    right_grams = {second[index:index + 3] for index in range(len(second) - 2)}
+    union = left_grams | right_grams
+    return len(left_grams & right_grams) / len(union) if union else 0.0
+
+
+def dedupe_history_batch(
+    batch: list[dict[str, Any]],
+    threshold: float = DREAM_BATCH_DEDUP_THRESHOLD,
+) -> tuple[list[dict[str, Any]], int]:
+    """Keep the newest copy of each repeated history entry in one Dream batch.
+
+    Entries are visited newest-first so the most complete wording survives, then
+    restored to chronological order for the prompt.  The journal itself is never
+    modified; only the view handed to the model is collapsed.  A threshold
+    outside ``(0, 1)`` disables the filter.
+    """
+    if not 0.0 < threshold < 1.0:
+        return batch, 0
+    kept: list[dict[str, Any]] = []
+    seen: list[str] = []
+    for entry in reversed(batch):
+        text = truncate_text(str(entry.get("content", "")), DREAM_PROMPT_ENTRY_CHARS)
+        comparable = len(text) >= DREAM_BATCH_DEDUP_MIN_CHARS
+        if comparable and any(
+            len(other) >= DREAM_BATCH_DEDUP_MIN_CHARS and _trigram_similarity(text, other) > threshold
+            for other in seen
+        ):
+            continue
+        seen.append(text)
+        kept.append(entry)
+    kept.reverse()
+    return kept, len(batch) - len(kept)
 
 
 class MemoryArchiver:

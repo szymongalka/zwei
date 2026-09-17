@@ -476,6 +476,8 @@ def _run_gateway(
         sessions=session_manager,
         bus=bus,
         unified_session=config.agents.defaults.unified_session,
+        auto_resume=config.agents.defaults.resume_after_restart,
+        journal=config.workspace_path / "memory" / "restart-resume.jsonl",
     )
 
     # Create agent with cron service
@@ -579,6 +581,8 @@ def _run_gateway(
             store = agent.context.memory
             resp = None
             diff_body = ""
+            completed = False
+            reason = ""
             try:
                 result = store.build_dream_prompt()
                 if result is None:
@@ -614,17 +618,20 @@ def _run_gateway(
                             last_cursor,
                         )
                 else:
+                    reason = MemoryStore.dream_incompletion_reason(resp)
                     logger.warning(
                         "Dream cron job did not complete ({}); cursor remains at {}",
-                        MemoryStore.dream_incompletion_reason(resp),
+                        reason,
                         store.get_last_dream_cursor(),
                     )
             except Exception:
+                reason = "exception"
                 logger.exception("Dream cron job failed")
             finally:
                 sha = _commit_dream_changes(store)
                 if sha:
                     logger.info("Dream commit: {}", sha)
+                store.record_dream_run(completed=completed, reason=reason, commit=sha or "")
                 store.compact_history()
                 prune_dream_sessions(agent.sessions)
             return None
@@ -925,6 +932,9 @@ def _run_gateway(
             # accepting new input.  That makes a new user message reliably
             # supersede an old recoverable turn instead of racing its queue.
             await recovery.scan()
+            # Interrupted turns on channels without a confirmation prompt are
+            # continued once per checkpoint; the WebUI keeps its explicit flow.
+            await recovery.resume_after_restart()
             async def _run_agent() -> None:
                 try:
                     await mcp_provider.connect()

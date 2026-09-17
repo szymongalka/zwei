@@ -33,6 +33,7 @@ class _FakeStore:
         self._dream_prompt_result = dream_prompt_result
         self._content_diff = content_diff
         self.compact_history_called = False
+        self.dream_runs: list[dict[str, object]] = []
 
     def get_last_dream_cursor(self) -> int:
         return self._last_dream_cursor
@@ -51,6 +52,17 @@ class _FakeStore:
 
     def compact_history(self) -> None:
         self.compact_history_called = True
+
+    def record_dream_run(
+        self,
+        *,
+        completed: bool,
+        reason: str | None = None,
+        commit: str = "",
+    ):
+        """Record a finished Dream run like ``MemoryStore`` does."""
+        self.dream_runs.append({"completed": completed, "reason": reason, "commit": commit})
+        return None
 
 
 class _FakeGit:
@@ -271,6 +283,30 @@ async def test_dream_keeps_cursor_when_incomplete_with_diff(tmp_path) -> None:
     await asyncio.sleep(0)
     assert store._last_dream_cursor == 5
     assert "did not complete" in ctx.loop.bus.outbound[0].content
+
+
+@pytest.mark.asyncio
+async def test_dream_records_run_for_resume_audit(tmp_path) -> None:
+    """The manual /dream run leaves an audit record a later start can resume from."""
+    ctx, store = _build_runnable_dream(tmp_path, initialized=True, content_diff="")
+    await cmd_dream(ctx)
+    await asyncio.sleep(0)
+    assert store.dream_runs == [{"completed": True, "reason": "", "commit": ""}]
+
+
+@pytest.mark.asyncio
+async def test_dream_records_incomplete_run_with_reason(tmp_path) -> None:
+    """An incomplete run is recorded as such, with the reason, so it stays retryable."""
+    ctx, store = _build_runnable_dream(
+        tmp_path,
+        initialized=True,
+        content_diff="",
+        stop_reason="length",
+    )
+    await cmd_dream(ctx)
+    await asyncio.sleep(0)
+    assert store.dream_runs[0]["completed"] is False
+    assert store.dream_runs[0]["reason"]
 
 
 @pytest.mark.asyncio

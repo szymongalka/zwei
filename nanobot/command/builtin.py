@@ -626,6 +626,8 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
         content = ""
         resp = None
         diff_body = ""
+        completed = False
+        reason = ""
         t0 = time.monotonic()
         try:
             result = store.build_dream_prompt()
@@ -666,13 +668,16 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
                 )
         except Exception as e:
             elapsed = time.monotonic() - t0
+            reason = "exception"
             content = f"Dream failed after {elapsed:.1f}s: {e}"
         finally:
+            sha = ""
             if store.git.is_initialized():
                 commit_msg = build_dream_commit_message("dream: manual run", diff_body)
                 sha = store.git.auto_commit(commit_msg)
                 if sha:
                     content += f" (commit {sha})"
+            store.record_dream_run(completed=completed, reason=reason, commit=sha or "")
             store.compact_history()
             prune_dream_sessions(loop.sessions)
         await loop.bus.publish_outbound(OutboundMessage(
