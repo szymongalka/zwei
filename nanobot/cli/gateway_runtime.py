@@ -510,6 +510,7 @@ def _run_gateway(
         agent.tools.register(PersonalArchiveTool(personal))
         agent.register_runtime_context_provider(personal.runtime_context)
         agent.context.memory.archive_sink = personal.archive
+        agent.context.memory.episode_sink = personal.record_episode
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 

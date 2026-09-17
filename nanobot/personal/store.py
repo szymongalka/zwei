@@ -295,6 +295,13 @@ class PersonalStore:
             db.execute("INSERT OR IGNORE INTO snapshot_outbox(id) VALUES (?)", (identity,))
         return identity
 
+    def has_record(self, source: str, key: str) -> bool:
+        """Whether a record with this identity is already archived."""
+        with self.db() as db:
+            return db.execute(
+                "SELECT 1 FROM documents WHERE namespace=? AND source=? AND item_key=? LIMIT 1",
+                (self.namespace, source, key)).fetchone() is not None
+
     def get(self, identifier: str) -> dict[str, Any]:
         """Read one raw record from the live archive or, failing that, from evidence."""
         row = self._document(self.path, identifier)

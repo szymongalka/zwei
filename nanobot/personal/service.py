@@ -18,6 +18,12 @@ from nanobot.agent.hook import AgentHook, AgentRunHookContext, AgentTurnHookCont
 from nanobot.agent.tools.context import RequestContext
 from nanobot.personal.config import Account, PersonalConfig
 from nanobot.personal.connectors import dav_sync, mailbox_sync, send_mail, test_account
+from nanobot.personal.episodes import (
+    EPISODE_SOURCE_PREFIX,
+    build_episode,
+    episode_key,
+    episode_projection,
+)
 from nanobot.personal.ics import refresh_calendar_projections
 from nanobot.personal.store import PersonalStore, readable_excerpt, searchable_text, utcnow
 from nanobot.personal.vector import VectorMemory
@@ -382,6 +388,23 @@ class PersonalService:
         if session and session.messages:
             self.store.archive_messages(key, session.messages, reason + ":session")
         return self.store.archive_messages(key, messages, reason)
+
+    def record_episode(self, session_key: str, summary: str,
+                       messages: list[dict[str, Any]]) -> str | None:
+        """Store the task episode that stands for this session in the curated layer.
+
+        The transcript stays in the archive as evidence (cold); the episode is what
+        retrieval is allowed to inject.  Background sessions produce nothing here,
+        and re-compacting the same session adds no second copy.
+        """
+        episode = build_episode(session_key, summary, messages)
+        if episode is None:
+            return None
+        source = EPISODE_SOURCE_PREFIX + session_key
+        key = episode_key(episode)
+        if self.store.has_record(source, key):
+            return None
+        return self.store.put(source, key, episode, text=episode_projection(episode))
 
     def action(self, request: PersonalAction) -> object:
         if request.action == "status":
